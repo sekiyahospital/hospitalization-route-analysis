@@ -124,8 +124,8 @@ ${monthlyData.riskPatterns?.slice(0, 5).map((p: { pattern: string; cvr: number; 
                 usage: {
                   input_tokens: usage.input_tokens,
                   output_tokens: usage.output_tokens,
-                  cache_creation_input_tokens: (usage as Record<string, unknown>).cache_creation_input_tokens || 0,
-                  cache_read_input_tokens: (usage as Record<string, unknown>).cache_read_input_tokens || 0,
+                  cache_creation_input_tokens: (usage as unknown as Record<string, number>).cache_creation_input_tokens || 0,
+                  cache_read_input_tokens: (usage as unknown as Record<string, number>).cache_read_input_tokens || 0,
                 },
               })}\n\n`
             )
