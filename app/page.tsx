@@ -80,12 +80,25 @@ function parseExcelToRecords(XLSX: any, workbook: any): HospitalRecord[] {
   }).filter((r) => r.name || r.status);
 }
 
+interface AIInsights {
+  overview?: { dailyAdmissions?: string; statusDist?: string; funnel?: string; referralRoute?: string; preAdmissionLoc?: string };
+  cv?: { sourceMonthly?: string; sourceTable?: string; dailyTrend?: string; cancelReasons?: string };
+  contacts?: { dailyContacts?: string; touchPoints?: string; funnelDetail?: string };
+  notes?: { selectionReasons?: string; cancelPatterns?: string; medicalNeeds?: string; competitors?: string };
+  cross?: { factorRanking?: string; goldenPaths?: string; riskPatterns?: string; heatmaps?: string };
+  map?: { geoDistribution?: string; topAreas?: string };
+  ai?: { kpiComment?: string; funnelComment?: string; cvrHighComment?: string; cvrLowComment?: string; selectionComment?: string; cancelComment?: string; areaComment?: string };
+  nextActions?: { title: string; desc: string; impact: string; effort: string; priority: string }[];
+}
+
 export default function Home() {
   const [records, setRecords] = useState<HospitalRecord[]>([]);
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
+  const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
+  const [aiGlobalStatus, setAiGlobalStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
 
   useEffect(() => {
     fetch("/hospital_data.json")
@@ -181,6 +194,47 @@ export default function Home() {
     };
   }, [prevYearRecords]);
 
+  useEffect(() => {
+    setAiInsights(null);
+    setAiGlobalStatus("idle");
+  }, [selectedMonthKey]);
+
+  const handleGlobalAI = useCallback(async () => {
+    if (!analysisData) return;
+    setAiGlobalStatus("loading");
+    setAiInsights(null);
+    try {
+      const monthlyData = {
+        year: analysisData.dataMonth.year, month: analysisData.dataMonth.month,
+        totalRecords: analysisData.totalRecords, totalAdmitted: analysisData.totalAdmitted,
+        overallCVR: analysisData.overallCVR, leadTime: analysisData.leadTime,
+        statusDist: analysisData.statusDist, sourceCVData: analysisData.sourceCVData,
+        funnelData: analysisData.funnelData, cancelReasons: analysisData.cancelReasons,
+        kpAddressData: analysisData.kpAddressData,
+        selectionReasons: analysisData.notesAnalysis.selectionReasons,
+        competitors: analysisData.notesAnalysis.competitors,
+        goldenPaths: analysisData.crossAnalysis.goldenPaths,
+        riskPatterns: analysisData.crossAnalysis.riskPatterns,
+        prevYear: prevYearData ? {
+          totalRecords: prevYearData.totalRecords, totalAdmitted: prevYearData.totalAdmitted,
+          overallCVR: prevYearData.overallCVR, leadTime: prevYearData.leadTime,
+          funnelData: prevYearData.funnelData, cancelReasons: prevYearData.cancelReasons,
+        } : null,
+      };
+      const res = await fetch("/api/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ monthlyData, mode: "sections" }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "API failed");
+      const data = await res.json();
+      setAiInsights(data.sections);
+      setAiGlobalStatus("done");
+    } catch (err) {
+      console.error("AI analysis error:", err);
+      setAiGlobalStatus("error");
+    }
+  }, [analysisData, prevYearData]);
+
   if (records.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -214,6 +268,27 @@ export default function Home() {
             <h1 className="text-base font-bold tracking-tight">関屋病院 入院経路分析</h1>
           </div>
           <div className="flex items-center gap-3">
+            {analysisData && (
+              <button
+                onClick={handleGlobalAI}
+                disabled={aiGlobalStatus === "loading"}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                  aiGlobalStatus === "loading"
+                    ? "bg-violet-800 text-violet-300 cursor-not-allowed"
+                    : aiGlobalStatus === "done"
+                    ? "bg-green-600 hover:bg-green-500 text-white"
+                    : "bg-violet-600 hover:bg-violet-500 text-white"
+                }`}
+              >
+                {aiGlobalStatus === "loading" ? (
+                  <><span className="animate-spin w-3.5 h-3.5 border-2 border-violet-300 border-t-transparent rounded-full"></span>AI分析中...</>
+                ) : aiGlobalStatus === "done" ? (
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>AI分析済</>
+                ) : (
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>AI分析</>
+                )}
+              </button>
+            )}
             <label className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg cursor-pointer transition text-sm font-medium">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -297,6 +372,7 @@ export default function Home() {
               routeData={analysisData.routeData} funnelData={analysisData.funnelData}
               preAdmissionLoc={analysisData.preAdmissionLoc}
               prevYear={prevYearData}
+              aiInsights={aiInsights?.overview}
             />
           )}
           {analysisData && activeTab === "cv" && (
@@ -306,6 +382,7 @@ export default function Home() {
               cancelReasons={analysisData.cancelReasons}
               monthlyAdmissions={analysisData.monthlyAdmissions}
               prevYear={prevYearData}
+              aiInsights={aiInsights?.cv}
             />
           )}
           {analysisData && activeTab === "contacts" && (
@@ -316,11 +393,12 @@ export default function Home() {
               leadTime={analysisData.leadTime}
               records={filteredRecords}
               prevYear={prevYearData}
+              aiInsights={aiInsights?.contacts}
             />
           )}
-          {analysisData && activeTab === "notes" && <NotesTab notesAnalysis={analysisData.notesAnalysis} />}
-          {analysisData && activeTab === "cross" && <CrossAnalysisTab crossAnalysis={analysisData.crossAnalysis} />}
-          {analysisData && activeTab === "map" && <MapTab kpAddressData={analysisData.kpAddressData} totalAdmitted={analysisData.totalAdmitted} />}
+          {analysisData && activeTab === "notes" && <NotesTab notesAnalysis={analysisData.notesAnalysis} aiInsights={aiInsights?.notes} />}
+          {analysisData && activeTab === "cross" && <CrossAnalysisTab crossAnalysis={analysisData.crossAnalysis} aiInsights={aiInsights?.cross} />}
+          {analysisData && activeTab === "map" && <MapTab kpAddressData={analysisData.kpAddressData} totalAdmitted={analysisData.totalAdmitted} aiInsights={aiInsights?.map} />}
           {analysisData && activeTab === "ai" && (
             <AITab
               dataMonth={analysisData.dataMonth}
@@ -332,6 +410,7 @@ export default function Home() {
               crossAnalysis={analysisData.crossAnalysis} funnelData={analysisData.funnelData}
               statusDist={analysisData.statusDist}
               prevYear={prevYearData}
+              aiInsights={aiInsights}
             />
           )}
         </main>
@@ -375,7 +454,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 // ==================== Overview Tab ====================
 function OverviewTab({
   dataMonth, totalRecords, totalAdmitted, overallCVR, leadTime,
-  monthlyAdmissions, statusDist, routeData, funnelData, preAdmissionLoc, prevYear,
+  monthlyAdmissions, statusDist, routeData, funnelData, preAdmissionLoc, prevYear, aiInsights,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   totalRecords: number;
@@ -388,6 +467,7 @@ function OverviewTab({
   funnelData: ReturnType<typeof getFunnelData>;
   preAdmissionLoc: ReturnType<typeof getPreAdmissionLocationData>;
   prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; leadTime: ReturnType<typeof getLeadTimeStats> } | null;
+  aiInsights?: AIInsights["overview"];
 }) {
   return (
     <div className="space-y-6">
@@ -409,6 +489,7 @@ function OverviewTab({
             <Bar dataKey="count" fill="#1e40af" radius={[4, 4, 0, 0]} name="入院数" />
           </BarChart>
         </ResponsiveContainer>
+        {aiInsights?.dailyAdmissions && <PointBox type="info" isAI>{aiInsights.dailyAdmissions}</PointBox>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -425,6 +506,7 @@ function OverviewTab({
               <Tooltip formatter={(value) => [`${value}件`]} />
             </PieChart>
           </ResponsiveContainer>
+          {aiInsights?.statusDist && <PointBox type="info" isAI>{aiInsights.statusDist}</PointBox>}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -449,6 +531,7 @@ function OverviewTab({
               );
             })}
           </div>
+          {aiInsights?.funnel && <PointBox type="info" isAI>{aiInsights.funnel}</PointBox>}
         </div>
       </div>
 
@@ -464,6 +547,7 @@ function OverviewTab({
               <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.referralRoute && <PointBox type="info" isAI>{aiInsights.referralRoute}</PointBox>}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -479,6 +563,7 @@ function OverviewTab({
               <Tooltip formatter={(value) => [`${value}件`]} />
             </PieChart>
           </ResponsiveContainer>
+          {aiInsights?.preAdmissionLoc && <PointBox type="info" isAI>{aiInsights.preAdmissionLoc}</PointBox>}
         </div>
       </div>
     </div>
@@ -487,7 +572,7 @@ function OverviewTab({
 
 // ==================== CV Analysis Tab ====================
 function CVTab({
-  dataMonth, sourceCVData, monthlyAdmissions, cancelReasons, records, prevYear,
+  dataMonth, sourceCVData, monthlyAdmissions, cancelReasons, records, prevYear, aiInsights,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   sourceCVData: ReturnType<typeof getSourceCVData>;
@@ -495,6 +580,7 @@ function CVTab({
   cancelReasons: ReturnType<typeof getCancelReasonData>;
   records: HospitalRecord[];
   prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; sourceCVData: ReturnType<typeof getSourceCVData>; cancelReasons: ReturnType<typeof getCancelReasonData> } | null;
+  aiInsights?: AIInsights["cv"];
 }) {
   const top20Sources = sourceCVData.slice(0, 20);
   const { data: sourceMonthly, sources: allSources } = getSourceMonthlyTrend(records, 15, dataMonth);
@@ -551,6 +637,7 @@ function CVTab({
             )}
           </LineChart>
         </ResponsiveContainer>
+        {aiInsights?.sourceMonthly && <PointBox type="info" isAI>{aiInsights.sourceMonthly}</PointBox>}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -585,6 +672,7 @@ function CVTab({
             </tbody>
           </table>
         </div>
+        {aiInsights?.sourceTable && <PointBox type="success" isAI>{aiInsights.sourceTable}</PointBox>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -599,6 +687,7 @@ function CVTab({
               <Line type="monotone" dataKey="count" stroke="#1e40af" strokeWidth={2} dot={{ fill: "#1e40af", r: 4 }} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
+          {aiInsights?.dailyTrend && <PointBox type="info" isAI>{aiInsights.dailyTrend}</PointBox>}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -612,6 +701,7 @@ function CVTab({
               <Bar dataKey="value" fill="#dc2626" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.cancelReasons && <PointBox type="danger" isAI>{aiInsights.cancelReasons}</PointBox>}
         </div>
       </div>
     </div>
@@ -620,7 +710,7 @@ function CVTab({
 
 // ==================== Contacts Tab ====================
 function ContactsTab({
-  dataMonth, monthlyContacts, funnelData, leadTime, records, prevYear,
+  dataMonth, monthlyContacts, funnelData, leadTime, records, prevYear, aiInsights,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   monthlyContacts: ReturnType<typeof getMonthlyContacts>;
@@ -628,6 +718,7 @@ function ContactsTab({
   leadTime: ReturnType<typeof getLeadTimeStats>;
   records: HospitalRecord[];
   prevYear: { funnelData: ReturnType<typeof getFunnelData>; leadTime: ReturnType<typeof getLeadTimeStats> } | null;
+  aiInsights?: AIInsights["contacts"];
 }) {
   const contactsByPatient = new Map<string, number>();
   for (const r of records) {
@@ -672,6 +763,7 @@ function ContactsTab({
             <Bar dataKey="admissions" fill="#059669" name="入院数" radius={[4, 4, 0, 0]} />
           </ComposedChart>
         </ResponsiveContainer>
+        {aiInsights?.dailyContacts && <PointBox type="info" isAI>{aiInsights.dailyContacts}</PointBox>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -686,6 +778,7 @@ function ContactsTab({
               <Bar dataKey="patients" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="患者数" />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.touchPoints && <PointBox type="info" isAI>{aiInsights.touchPoints}</PointBox>}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -715,6 +808,7 @@ function ContactsTab({
               );
             })}
           </div>
+          {aiInsights?.funnelDetail && <PointBox type="info" isAI>{aiInsights.funnelDetail}</PointBox>}
         </div>
       </div>
     </div>
@@ -723,10 +817,11 @@ function ContactsTab({
 
 // ==================== Map Tab ====================
 function MapTab({
-  kpAddressData, totalAdmitted,
+  kpAddressData, totalAdmitted, aiInsights,
 }: {
   kpAddressData: ReturnType<typeof getKPAddressData>;
   totalAdmitted: number;
+  aiInsights?: AIInsights["map"];
 }) {
   const top20 = kpAddressData.slice(0, 20);
   const maxCount = top20.length > 0 ? top20[0].count : 1;
@@ -753,6 +848,7 @@ function MapTab({
           </span>
         </p>
         <HospitalMap locations={geoLocations} />
+        {aiInsights?.geoDistribution && <PointBox type="info" isAI>{aiInsights.geoDistribution}</PointBox>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -787,6 +883,7 @@ function MapTab({
               <Bar dataKey="count" fill="#1e40af" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.topAreas && <PointBox type="success" isAI>{aiInsights.topAreas}</PointBox>}
         </div>
       </div>
     </div>
@@ -794,7 +891,7 @@ function MapTab({
 }
 
 // ==================== Notes Analysis Tab ====================
-function NotesTab({ notesAnalysis }: { notesAnalysis: NotesAnalysisResult }) {
+function NotesTab({ notesAnalysis, aiInsights }: { notesAnalysis: NotesAnalysisResult; aiInsights?: AIInsights["notes"] }) {
   const { selectionReasons, cancelPatterns, medicalNeeds, competitors, improvableCancels } = notesAnalysis;
 
   return (
@@ -828,6 +925,7 @@ function NotesTab({ notesAnalysis }: { notesAnalysis: NotesAnalysisResult }) {
               <Bar dataKey="count" fill="#059669" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.selectionReasons && <PointBox type="success" isAI>{aiInsights.selectionReasons}</PointBox>}
           <div className="mt-4 space-y-2">
             {selectionReasons.slice(0, 3).map((r) => (
               <div key={r.label} className="bg-green-50 rounded-lg p-3">
@@ -851,6 +949,7 @@ function NotesTab({ notesAnalysis }: { notesAnalysis: NotesAnalysisResult }) {
               <Bar dataKey="count" fill="#dc2626" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.cancelPatterns && <PointBox type="danger" isAI>{aiInsights.cancelPatterns}</PointBox>}
           <div className="mt-4 space-y-2">
             {cancelPatterns.slice(0, 3).map((r) => (
               <div key={r.label} className="bg-red-50 rounded-lg p-3">
@@ -876,6 +975,7 @@ function NotesTab({ notesAnalysis }: { notesAnalysis: NotesAnalysisResult }) {
               <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          {aiInsights?.medicalNeeds && <PointBox type="info" isAI>{aiInsights.medicalNeeds}</PointBox>}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -896,6 +996,7 @@ function NotesTab({ notesAnalysis }: { notesAnalysis: NotesAnalysisResult }) {
               </div>
             ))}
           </div>
+          {aiInsights?.competitors && <PointBox type="warning" isAI>{aiInsights.competitors}</PointBox>}
         </div>
       </div>
 
@@ -977,7 +1078,7 @@ function CrossTableView({ table }: { table: CrossTable }) {
   );
 }
 
-function CrossAnalysisTab({ crossAnalysis }: { crossAnalysis: CrossAnalysisResult }) {
+function CrossAnalysisTab({ crossAnalysis, aiInsights }: { crossAnalysis: CrossAnalysisResult; aiInsights?: AIInsights["cross"] }) {
   const { overallCVR, sourceByLocation, routeByLocation, leadTimeByCVR, touchPointByCVR, factorRanking, goldenPaths, riskPatterns } = crossAnalysis;
   const topFactors = factorRanking.filter((f) => f.lift >= 1.1).slice(0, 12);
   const bottomFactors = factorRanking.filter((f) => f.lift < 0.9 && f.total >= 5).sort((a, b) => a.lift - b.lift).slice(0, 8);
@@ -1047,6 +1148,7 @@ function CrossAnalysisTab({ crossAnalysis }: { crossAnalysis: CrossAnalysisResul
             </div>
           </div>
         </div>
+        {aiInsights?.factorRanking && <PointBox type="info" isAI>{aiInsights.factorRanking}</PointBox>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1089,6 +1191,7 @@ function CrossAnalysisTab({ crossAnalysis }: { crossAnalysis: CrossAnalysisResul
 
       <CrossTableView table={sourceByLocation} />
       <CrossTableView table={routeByLocation} />
+      {aiInsights?.heatmaps && <PointBox type="info" isAI>{aiInsights.heatmaps}</PointBox>}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -1131,6 +1234,12 @@ function CrossAnalysisTab({ crossAnalysis }: { crossAnalysis: CrossAnalysisResul
           </div>
         </div>
       </div>
+      {(aiInsights?.goldenPaths || aiInsights?.riskPatterns) && (
+        <div className="space-y-2">
+          {aiInsights?.goldenPaths && <PointBox type="success" isAI>{aiInsights.goldenPaths}</PointBox>}
+          {aiInsights?.riskPatterns && <PointBox type="danger" isAI>{aiInsights.riskPatterns}</PointBox>}
+        </div>
+      )}
 
       <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl p-6 text-white">
         <h3 className="text-lg font-bold mb-3 flex items-center gap-2"><span>🎯</span>クロス分析から導くアクション</h3>
@@ -1146,7 +1255,7 @@ function CrossAnalysisTab({ crossAnalysis }: { crossAnalysis: CrossAnalysisResul
 }
 
 // ==================== AI Analysis Tab ====================
-function PointBox({ type, children }: { type: "success" | "warning" | "danger" | "info"; children: React.ReactNode }) {
+function PointBox({ type, children, isAI }: { type: "success" | "warning" | "danger" | "info"; children: React.ReactNode; isAI?: boolean }) {
   const styles = {
     success: { bg: "bg-emerald-50 border-emerald-400", label: "GOOD POINT", labelBg: "bg-emerald-600" },
     warning: { bg: "bg-amber-50 border-amber-400", label: "注目ポイント", labelBg: "bg-amber-500" },
@@ -1157,6 +1266,7 @@ function PointBox({ type, children }: { type: "success" | "warning" | "danger" |
   return (
     <div className={`${s.bg} border-l-4 rounded-r-lg p-4 relative`}>
       <span className={`${s.labelBg} text-white text-[10px] font-bold px-2 py-0.5 rounded-full absolute -top-2 left-3`}>{s.label}</span>
+      {isAI && <span className="absolute -top-2 right-3 bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">AI</span>}
       <div className="text-sm text-gray-800 mt-1">{children}</div>
     </div>
   );
@@ -1165,7 +1275,7 @@ function PointBox({ type, children }: { type: "success" | "warning" | "danger" |
 function AITab({
   dataMonth, records, sourceCVData, monthlyAdmissions, leadTime, cancelReasons,
   overallCVR, totalAdmitted, totalRecords, kpAddressData, notesAnalysis,
-  crossAnalysis, funnelData, statusDist, prevYear,
+  crossAnalysis, funnelData, statusDist, prevYear, aiInsights,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   records: HospitalRecord[];
@@ -1182,6 +1292,7 @@ function AITab({
   funnelData: ReturnType<typeof getFunnelData>;
   statusDist: ReturnType<typeof getStatusDistribution>;
   prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; leadTime: ReturnType<typeof getLeadTimeStats>; sourceCVData: ReturnType<typeof getSourceCVData>; funnelData: ReturnType<typeof getFunnelData>; cancelReasons: ReturnType<typeof getCancelReasonData>; kpAddressData: ReturnType<typeof getKPAddressData> } | null;
+  aiInsights: AIInsights | null;
 }) {
   const reportRef = useRef<HTMLDivElement>(null);
   const [exportStatus, setExportStatus] = useState<"idle" | "pdf" | "kintone" | "done" | "error">("idle");
@@ -1197,76 +1308,50 @@ function AITab({
 
     try {
       const monthlyData = {
-        year: dataMonth.year,
-        month: dataMonth.month,
-        totalRecords,
-        totalAdmitted,
-        overallCVR,
-        leadTime,
-        statusDist,
-        sourceCVData,
-        funnelData,
-        cancelReasons,
-        kpAddressData,
+        year: dataMonth.year, month: dataMonth.month,
+        totalRecords, totalAdmitted, overallCVR, leadTime, statusDist,
+        sourceCVData, funnelData, cancelReasons, kpAddressData,
         selectionReasons: notesAnalysis.selectionReasons,
         competitors: notesAnalysis.competitors,
         goldenPaths: crossAnalysis.goldenPaths,
         riskPatterns: crossAnalysis.riskPatterns,
         prevYear: prevYear ? {
-          totalRecords: prevYear.totalRecords,
-          totalAdmitted: prevYear.totalAdmitted,
-          overallCVR: prevYear.overallCVR,
-          leadTime: prevYear.leadTime,
-          funnelData: prevYear.funnelData,
-          cancelReasons: prevYear.cancelReasons,
+          totalRecords: prevYear.totalRecords, totalAdmitted: prevYear.totalAdmitted,
+          overallCVR: prevYear.overallCVR, leadTime: prevYear.leadTime,
+          funnelData: prevYear.funnelData, cancelReasons: prevYear.cancelReasons,
         } : null,
       };
 
       const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ monthlyData }),
       });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "API request failed");
-      }
-
+      if (!res.ok) throw new Error((await res.json()).error || "API request failed");
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No response body");
-
       const decoder = new TextDecoder();
       let buffer = "";
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n\n");
         buffer = lines.pop() || "";
-
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const data = JSON.parse(line.slice(6));
-          if (data.type === "text") {
-            setAiResponse((prev) => prev + data.text);
-          } else if (data.type === "done") {
-            setAiUsage(data.usage);
-          } else if (data.type === "error") {
-            throw new Error(data.error);
-          }
+          if (data.type === "text") setAiResponse((prev) => prev + data.text);
+          else if (data.type === "done") setAiUsage(data.usage);
+          else if (data.type === "error") throw new Error(data.error);
         }
       }
-
       setAiStatus("done");
     } catch (err) {
       console.error("AI analysis error:", err);
       setAiResponse(`エラーが発生しました: ${err instanceof Error ? err.message : String(err)}`);
       setAiStatus("error");
     }
-  }, [dataMonth, totalRecords, totalAdmitted, overallCVR, leadTime, statusDist, sourceCVData, funnelData, cancelReasons, kpAddressData, notesAnalysis, crossAnalysis]);
+  }, [dataMonth, totalRecords, totalAdmitted, overallCVR, leadTime, statusDist, sourceCVData, funnelData, cancelReasons, kpAddressData, notesAnalysis, crossAnalysis, prevYear]);
 
   const handleExport = useCallback(async () => {
     if (!reportRef.current) return;
@@ -1440,8 +1525,8 @@ function AITab({
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
-            <PointBox type={trend === "増加" ? "success" : trend === "減少" ? "danger" : "info"}>
-              {dataMonth.label}は合計<strong>{recentAvg}件</strong>の入院がありました。
+            <PointBox type={trend === "増加" ? "success" : trend === "減少" ? "danger" : "info"} isAI={!!aiInsights?.ai?.kpiComment}>
+              {aiInsights?.ai?.kpiComment || <>{dataMonth.label}は合計<strong>{recentAvg}件</strong>の入院がありました。</>}
             </PointBox>
           </div>
           <div>
@@ -1466,7 +1551,9 @@ function AITab({
                 );
               })}
             </div>
-            <PointBox type="info">面談→入院の転換率が最も高く、<strong>面談実施が入院決定の最重要ドライバー</strong>です。問い合わせから面談への誘導率の向上が鍵となります。</PointBox>
+            <PointBox type="info" isAI={!!aiInsights?.ai?.funnelComment}>
+              {aiInsights?.ai?.funnelComment || <>面談→入院の転換率が最も高く、<strong>面談実施が入院決定の最重要ドライバー</strong>です。問い合わせから面談への誘導率の向上が鍵となります。</>}
+            </PointBox>
           </div>
         </div>
       </div>
@@ -1491,8 +1578,8 @@ function AITab({
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <PointBox type="success">
-          {highCVRSources[0] && (<><strong>{highCVRSources[0].source}</strong>がCVR <strong>{highCVRSources[0].cvr}%</strong> と最も高く、全体平均{overallCVR}%の<strong>{Math.round(highCVRSources[0].cvr / overallCVR * 10) / 10}倍</strong>です。</>)}
+        <PointBox type="success" isAI={!!aiInsights?.ai?.cvrHighComment}>
+          {aiInsights?.ai?.cvrHighComment || (highCVRSources[0] && (<><strong>{highCVRSources[0].source}</strong>がCVR <strong>{highCVRSources[0].cvr}%</strong> と最も高く、全体平均{overallCVR}%の<strong>{Math.round(highCVRSources[0].cvr / overallCVR * 10) / 10}倍</strong>です。</>))}
         </PointBox>
         <h4 className="text-sm font-bold text-gray-700 mt-6 mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span>改善ポテンシャルが大きい紹介元</h4>
         <div className="overflow-hidden rounded-lg border border-gray-200 mb-4">
@@ -1520,7 +1607,9 @@ function AITab({
             </tbody>
           </table>
         </div>
-        <PointBox type="warning">低CVR紹介元のCVRを全体平均まで引き上げた場合、<strong>最大+{lowCVRSources.reduce((sum, s) => sum + Math.max(Math.round(s.totalContacts * (overallCVR / 100) - s.admissions), 0), 0)}件の追加入院</strong>が見込めます。</PointBox>
+        <PointBox type="warning" isAI={!!aiInsights?.ai?.cvrLowComment}>
+          {aiInsights?.ai?.cvrLowComment || <>低CVR紹介元のCVRを全体平均まで引き上げた場合、<strong>最大+{lowCVRSources.reduce((sum, s) => sum + Math.max(Math.round(s.totalContacts * (overallCVR / 100) - s.admissions), 0), 0)}件の追加入院</strong>が見込めます。</>}
+        </PointBox>
       </div>
 
       {/* Section 3: Qualitative */}
@@ -1541,8 +1630,8 @@ function AITab({
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <PointBox type="success">
-              {notesAnalysis.selectionReasons[0] && (<><strong>「{notesAnalysis.selectionReasons[0].label}」が{notesAnalysis.selectionReasons[0].count}件で最多</strong>。</>)}
+            <PointBox type="success" isAI={!!aiInsights?.ai?.selectionComment}>
+              {aiInsights?.ai?.selectionComment || (notesAnalysis.selectionReasons[0] && (<><strong>「{notesAnalysis.selectionReasons[0].label}」が{notesAnalysis.selectionReasons[0].count}件で最多</strong>。</>))}
             </PointBox>
           </div>
           <div>
@@ -1557,7 +1646,9 @@ function AITab({
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <PointBox type="danger">改善可能なキャンセルは<strong>{notesAnalysis.improvableCancels.total}件</strong>。営業施策で転換可能です。</PointBox>
+            <PointBox type="danger" isAI={!!aiInsights?.ai?.cancelComment}>
+              {aiInsights?.ai?.cancelComment || <>改善可能なキャンセルは<strong>{notesAnalysis.improvableCancels.total}件</strong>。営業施策で転換可能です。</>}
+            </PointBox>
           </div>
         </div>
         {notesAnalysis.competitors.length > 0 && (
@@ -1637,8 +1728,8 @@ function AITab({
             </BarChart>
           </ResponsiveContainer>
         </div>
-        <PointBox type="info">
-          上位3地域（<strong>{topAreas.slice(0, 3).map(a => a.address).join("、")}</strong>）で入院患者の約{topAreas.length > 0 ? Math.round(topAreas.slice(0, 3).reduce((s, a) => s + a.count, 0) / totalAdmitted * 100) : 0}%を占めます。
+        <PointBox type="info" isAI={!!aiInsights?.ai?.areaComment}>
+          {aiInsights?.ai?.areaComment || <>上位3地域（<strong>{topAreas.slice(0, 3).map(a => a.address).join("、")}</strong>）で入院患者の約{topAreas.length > 0 ? Math.round(topAreas.slice(0, 3).reduce((s, a) => s + a.count, 0) / totalAdmitted * 100) : 0}%を占めます。</>}
         </PointBox>
       </div>
 
@@ -1646,19 +1737,23 @@ function AITab({
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
         <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
           <span className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600 text-sm font-bold">6</span>ネクストアクション
+          {aiInsights?.nextActions && <span className="bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full ml-2">AI生成</span>}
         </h3>
         <div className="space-y-3">
-          {[
-            { title: "高CVR紹介元への関係強化", desc: `${highCVRSources.slice(0, 3).map(s => s.source).join("、")}は高CVRを維持。定期訪問・勉強会を月1回開催。`, impact: "大", effort: "小", priority: "最優先", pColor: "bg-red-600", bgColor: "bg-red-50 border-red-200" },
-            { title: "口コミ・HP経由チャネル強化", desc: "退院時アンケート→Google口コミ誘導、食事風景のSNS投稿強化を実施。", impact: "大", effort: "中", priority: "最優先", pColor: "bg-red-600", bgColor: "bg-red-50 border-red-200" },
-            { title: `競合対策: ${notesAnalysis.competitors[0]?.name || "主要競合"}への流出防止`, desc: "当院の強み（療養ケア品質・食事・面会時間の柔軟性）を初期対応時に明確に訴求。", impact: "大", effort: "中", priority: "高", pColor: "bg-orange-500", bgColor: "bg-orange-50 border-orange-200" },
-            { title: "費用面キャンセルの早期解消", desc: "面談前に費用シミュレーションシートを事前送付し、不安を早期解消。", impact: "中", effort: "小", priority: "高", pColor: "bg-orange-500", bgColor: "bg-orange-50 border-orange-200" },
-            { title: "リードタイム短縮", desc: `現在の平均${leadTime.avg}日→目標${Math.max(leadTime.avg - 5, 10)}日。初期対応を48時間以内に。`, impact: "中", effort: "中", priority: "高", pColor: "bg-orange-500", bgColor: "bg-orange-50 border-orange-200" },
-            { title: "重点エリア営業の集中展開", desc: `${topAreas.slice(0, 3).map(a => a.address).join("、")}の包括・居宅への営業を強化。`, impact: "中", effort: "中", priority: "中", pColor: "bg-blue-500", bgColor: "bg-blue-50 border-blue-200" },
-          ].map((action) => (
-            <div key={action.title} className={`border rounded-lg p-4 ${action.bgColor}`}>
+          {(aiInsights?.nextActions || [
+            { title: "高CVR紹介元への関係強化", desc: `${highCVRSources.slice(0, 3).map(s => s.source).join("、")}は高CVRを維持。定期訪問・勉強会を月1回開催。`, impact: "大", effort: "小", priority: "最優先" },
+            { title: "口コミ・HP経由チャネル強化", desc: "退院時アンケート→Google口コミ誘導、食事風景のSNS投稿強化を実施。", impact: "大", effort: "中", priority: "最優先" },
+            { title: `競合対策: ${notesAnalysis.competitors[0]?.name || "主要競合"}への流出防止`, desc: "当院の強み（療養ケア品質・食事・面会時間の柔軟性）を初期対応時に明確に訴求。", impact: "大", effort: "中", priority: "高" },
+            { title: "費用面キャンセルの早期解消", desc: "面談前に費用シミュレーションシートを事前送付し、不安を早期解消。", impact: "中", effort: "小", priority: "高" },
+            { title: "リードタイム短縮", desc: `現在の平均${leadTime.avg}日→目標${Math.max(leadTime.avg - 5, 10)}日。初期対応を48時間以内に。`, impact: "中", effort: "中", priority: "高" },
+            { title: "重点エリア営業の集中展開", desc: `${topAreas.slice(0, 3).map(a => a.address).join("、")}の包括・居宅への営業を強化。`, impact: "中", effort: "中", priority: "中" },
+          ]).map((action) => {
+            const pColor = action.priority === "最優先" ? "bg-red-600" : action.priority === "高" ? "bg-orange-500" : "bg-blue-500";
+            const bgColor = action.priority === "最優先" ? "bg-red-50 border-red-200" : action.priority === "高" ? "bg-orange-50 border-orange-200" : "bg-blue-50 border-blue-200";
+            return (
+            <div key={action.title} className={`border rounded-lg p-4 ${bgColor}`}>
               <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <span className={`${action.pColor} text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full`}>{action.priority}</span>
+                <span className={`${pColor} text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full`}>{action.priority}</span>
                 <h4 className="font-bold text-sm text-gray-800">{action.title}</h4>
                 <div className="ml-auto flex items-center gap-2">
                   <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded border border-gray-200">効果: {action.impact}</span>
@@ -1667,7 +1762,8 @@ function AITab({
               </div>
               <p className="text-sm text-gray-700">{action.desc}</p>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
