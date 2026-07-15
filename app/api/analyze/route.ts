@@ -151,9 +151,8 @@ export async function POST(request: Request) {
 }`;
 
       const response = await client.messages.create({
-        model: "claude-opus-4-8",
-        max_tokens: 2048,
-        thinking: { type: "adaptive" },
+        model: "claude-sonnet-4-6",
+        max_tokens: 4096,
         system: SYSTEM_PROMPT_PARTS,
         messages: [{ role: "user", content: sectionPrompt }],
       });
@@ -163,12 +162,14 @@ export async function POST(request: Request) {
         if (block.type === "text") jsonText += block.text;
       }
 
-      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
+      const cleaned = jsonText.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const startIdx = cleaned.indexOf("{");
+      const endIdx = cleaned.lastIndexOf("}");
+      if (startIdx === -1 || endIdx === -1) {
         return Response.json({ error: "Failed to parse AI response" }, { status: 500 });
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(cleaned.slice(startIdx, endIdx + 1));
       const usage = response.usage;
       return Response.json({
         sections: parsed,
