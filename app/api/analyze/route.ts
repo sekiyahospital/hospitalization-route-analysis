@@ -35,6 +35,9 @@ const SYSTEM_PROMPT_PARTS: Anthropic.Messages.TextBlockParam[] = [
 ### 🎯 推奨アクション
 （優先度順に3-5個の具体的なアクションプラン。各アクションには「効果」「工数」「期限目安」を含めること）
 
+### 📈 前年同月比分析
+（前年データがある場合: 主要KPIの前年比変化、改善点と悪化点、トレンドの評価。前年データがない場合は省略）
+
 ### 💡 追加の考察
 （データからは直接読み取れないが、コンサルタントとして気づいた点やアドバイス）`,
   },
@@ -92,7 +95,17 @@ ${monthlyData.competitors?.map((c: { name: string; count: number }) => `- ${c.na
 ${monthlyData.goldenPaths?.slice(0, 5).map((p: { path: string; cvr: number; count: number }) => `- ${p.path}: CVR ${p.cvr}%, ${p.count}件`).join("\n") || "データなし"}
 
 ## リスクパターン（低CVR経路）
-${monthlyData.riskPatterns?.slice(0, 5).map((p: { pattern: string; cvr: number; count: number }) => `- ${p.pattern}: CVR ${p.cvr}%, ${p.count}件`).join("\n") || "データなし"}`;
+${monthlyData.riskPatterns?.slice(0, 5).map((p: { pattern: string; cvr: number; count: number }) => `- ${p.pattern}: CVR ${p.cvr}%, ${p.count}件`).join("\n") || "データなし"}
+${monthlyData.prevYear ? `
+## 前年同月（${monthlyData.year - 1}年${monthlyData.month}月）との比較データ
+- 前年 総問い合わせ数: ${monthlyData.prevYear.totalRecords}件 → 今年: ${monthlyData.totalRecords}件（${monthlyData.totalRecords - monthlyData.prevYear.totalRecords >= 0 ? "+" : ""}${monthlyData.totalRecords - monthlyData.prevYear.totalRecords}件）
+- 前年 入院数: ${monthlyData.prevYear.totalAdmitted}件 → 今年: ${monthlyData.totalAdmitted}件（${monthlyData.totalAdmitted - monthlyData.prevYear.totalAdmitted >= 0 ? "+" : ""}${monthlyData.totalAdmitted - monthlyData.prevYear.totalAdmitted}件）
+- 前年 CVR: ${monthlyData.prevYear.overallCVR}% → 今年: ${monthlyData.overallCVR}%
+- 前年 平均リードタイム: ${monthlyData.prevYear.leadTime.avg}日 → 今年: ${monthlyData.leadTime.avg}日
+- 前年 コンバージョンファネル:
+${monthlyData.prevYear.funnelData.map((f: { name: string; count: number }) => `  - ${f.name}: ${f.count}件`).join("\n")}
+
+前年比の変化について重点的に分析し、改善点・悪化点を明確にしてください。` : "前年同月のデータはありません。"}`;
 
     const stream = await client.messages.stream({
       model: "claude-opus-4-8",

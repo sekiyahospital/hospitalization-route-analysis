@@ -136,6 +136,11 @@ export default function Home() {
     return filterRecordsByMonth(records, selectedMonth);
   }, [records, selectedMonth]);
 
+  const prevYearRecords = useMemo(() => {
+    if (!selectedMonth || records.length === 0) return [];
+    return filterRecordsByMonth(records, { year: selectedMonth.year - 1, month: selectedMonth.month });
+  }, [records, selectedMonth]);
+
   const analysisData = useMemo(() => {
     if (filteredRecords.length === 0) return null;
     const dm = selectedMonth || getDataMonth(filteredRecords);
@@ -159,6 +164,22 @@ export default function Home() {
       overallCVR: Math.round((filteredRecords.filter((r) => r.status === "入院").length / filteredRecords.length) * 100),
     };
   }, [filteredRecords, selectedMonth]);
+
+  const prevYearData = useMemo(() => {
+    if (prevYearRecords.length === 0) return null;
+    const totalRecords = prevYearRecords.length;
+    const totalAdmitted = prevYearRecords.filter((r) => r.status === "入院").length;
+    return {
+      totalRecords,
+      totalAdmitted,
+      overallCVR: totalRecords > 0 ? Math.round((totalAdmitted / totalRecords) * 100) : 0,
+      leadTime: getLeadTimeStats(prevYearRecords),
+      sourceCVData: getSourceCVData(prevYearRecords),
+      funnelData: getFunnelData(prevYearRecords),
+      cancelReasons: getCancelReasonData(prevYearRecords),
+      kpAddressData: getKPAddressData(prevYearRecords),
+    };
+  }, [prevYearRecords]);
 
   if (records.length === 0) {
     return (
@@ -275,6 +296,7 @@ export default function Home() {
               monthlyAdmissions={analysisData.monthlyAdmissions} statusDist={analysisData.statusDist}
               routeData={analysisData.routeData} funnelData={analysisData.funnelData}
               preAdmissionLoc={analysisData.preAdmissionLoc}
+              prevYear={prevYearData}
             />
           )}
           {analysisData && activeTab === "cv" && (
@@ -283,6 +305,7 @@ export default function Home() {
               sourceCVData={analysisData.sourceCVData} records={filteredRecords}
               cancelReasons={analysisData.cancelReasons}
               monthlyAdmissions={analysisData.monthlyAdmissions}
+              prevYear={prevYearData}
             />
           )}
           {analysisData && activeTab === "contacts" && (
@@ -292,6 +315,7 @@ export default function Home() {
               funnelData={analysisData.funnelData}
               leadTime={analysisData.leadTime}
               records={filteredRecords}
+              prevYear={prevYearData}
             />
           )}
           {analysisData && activeTab === "notes" && <NotesTab notesAnalysis={analysisData.notesAnalysis} />}
@@ -307,6 +331,7 @@ export default function Home() {
               kpAddressData={analysisData.kpAddressData} notesAnalysis={analysisData.notesAnalysis}
               crossAnalysis={analysisData.crossAnalysis} funnelData={analysisData.funnelData}
               statusDist={analysisData.statusDist}
+              prevYear={prevYearData}
             />
           )}
         </main>
@@ -316,12 +341,29 @@ export default function Home() {
 }
 
 // ==================== Shared Components ====================
-function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+function YoYBadge({ current, previous, unit = "", isLowerBetter = false }: { current: number; previous: number | null | undefined; unit?: string; isLowerBetter?: boolean }) {
+  if (previous == null || previous === 0) return null;
+  const diff = current - previous;
+  const pct = Math.round((diff / previous) * 100);
+  const isPositive = isLowerBetter ? diff < 0 : diff > 0;
+  const isNeutral = diff === 0;
+  return (
+    <div className={`flex items-center gap-1 text-[11px] font-medium mt-1 ${isNeutral ? "text-gray-400" : isPositive ? "text-green-600" : "text-red-500"}`}>
+      <span>{isNeutral ? "→" : diff > 0 ? "↑" : "↓"}</span>
+      <span>前年比 {pct >= 0 ? "+" : ""}{pct}%</span>
+      <span className="text-gray-400">（{previous}{unit}）</span>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub, color, prevValue, unit, isLowerBetter }: { label: string; value: string | number; sub?: string; color?: string; prevValue?: number | null; unit?: string; isLowerBetter?: boolean }) {
+  const currentNum = typeof value === "string" ? parseFloat(value) : value;
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
       <p className="text-sm text-gray-500 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${color || "text-gray-900"}`}>{value}</p>
       {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+      {prevValue != null && !isNaN(currentNum) && <YoYBadge current={currentNum} previous={prevValue} unit={unit} isLowerBetter={isLowerBetter} />}
     </div>
   );
 }
@@ -333,7 +375,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 // ==================== Overview Tab ====================
 function OverviewTab({
   dataMonth, totalRecords, totalAdmitted, overallCVR, leadTime,
-  monthlyAdmissions, statusDist, routeData, funnelData, preAdmissionLoc,
+  monthlyAdmissions, statusDist, routeData, funnelData, preAdmissionLoc, prevYear,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   totalRecords: number;
@@ -345,14 +387,15 @@ function OverviewTab({
   routeData: ReturnType<typeof getReferralRouteData>;
   funnelData: ReturnType<typeof getFunnelData>;
   preAdmissionLoc: ReturnType<typeof getPreAdmissionLocationData>;
+  prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; leadTime: ReturnType<typeof getLeadTimeStats> } | null;
 }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="総問い合わせ数" value={totalRecords} sub={`${dataMonth.year}年${dataMonth.label}`} />
-        <StatCard label="入院数（CV）" value={totalAdmitted} color="text-green-600" />
-        <StatCard label="全体CVR" value={`${overallCVR}%`} color="text-blue-600" />
-        <StatCard label="平均リードタイム" value={`${leadTime.avg}日`} sub={`中央値: ${leadTime.median}日`} />
+        <StatCard label="総問い合わせ数" value={totalRecords} sub={`${dataMonth.year}年${dataMonth.label}`} prevValue={prevYear?.totalRecords} unit="件" />
+        <StatCard label="入院数（CV）" value={totalAdmitted} color="text-green-600" prevValue={prevYear?.totalAdmitted} unit="件" />
+        <StatCard label="全体CVR" value={`${overallCVR}%`} color="text-blue-600" prevValue={prevYear?.overallCVR} unit="%" />
+        <StatCard label="平均リードタイム" value={`${leadTime.avg}日`} sub={`中央値: ${leadTime.median}日`} prevValue={prevYear?.leadTime.avg} unit="日" isLowerBetter />
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -444,19 +487,22 @@ function OverviewTab({
 
 // ==================== CV Analysis Tab ====================
 function CVTab({
-  dataMonth, sourceCVData, monthlyAdmissions, cancelReasons, records,
+  dataMonth, sourceCVData, monthlyAdmissions, cancelReasons, records, prevYear,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   sourceCVData: ReturnType<typeof getSourceCVData>;
   monthlyAdmissions: ReturnType<typeof getMonthlyAdmissions>;
   cancelReasons: ReturnType<typeof getCancelReasonData>;
   records: HospitalRecord[];
+  prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; sourceCVData: ReturnType<typeof getSourceCVData>; cancelReasons: ReturnType<typeof getCancelReasonData> } | null;
 }) {
   const top20Sources = sourceCVData.slice(0, 20);
   const { data: sourceMonthly, sources: allSources } = getSourceMonthlyTrend(records, 15, dataMonth);
   const [selectedSources, setSelectedSources] = useState<Set<string>>(
     new Set(allSources.slice(0, 5))
   );
+  const prevTopSource = prevYear?.sourceCVData[0];
+  const prevHighCVR = prevYear?.sourceCVData.filter((s) => s.totalContacts >= 3).sort((a, b) => b.cvr - a.cvr)[0];
 
   const toggleSource = (source: string) => {
     setSelectedSources((prev) => {
@@ -470,10 +516,10 @@ function CVTab({
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Top紹介元" value={sourceCVData[0]?.source || "-"} sub={`${sourceCVData[0]?.admissions || 0}件の入院`} color="text-green-600" />
+        <StatCard label="Top紹介元" value={sourceCVData[0]?.source || "-"} sub={`${sourceCVData[0]?.admissions || 0}件の入院`} color="text-green-600" prevValue={prevTopSource?.admissions} unit="件" />
         <StatCard label="最高CVR（3件以上）" value={`${sourceCVData.filter((s) => s.totalContacts >= 3).sort((a, b) => b.cvr - a.cvr)[0]?.cvr || 0}%`}
-          sub={sourceCVData.filter((s) => s.totalContacts >= 3).sort((a, b) => b.cvr - a.cvr)[0]?.source || "-"} color="text-blue-600" />
-        <StatCard label="紹介元数" value={sourceCVData.length} sub="ユニーク紹介元" />
+          sub={sourceCVData.filter((s) => s.totalContacts >= 3).sort((a, b) => b.cvr - a.cvr)[0]?.source || "-"} color="text-blue-600" prevValue={prevHighCVR?.cvr} unit="%" />
+        <StatCard label="紹介元数" value={sourceCVData.length} sub="ユニーク紹介元" prevValue={prevYear?.sourceCVData.length} unit="元" />
         <StatCard label="キャンセル主因" value={cancelReasons[0]?.name || "-"} sub={`${cancelReasons[0]?.value || 0}件`} color="text-red-500" />
       </div>
 
@@ -574,13 +620,14 @@ function CVTab({
 
 // ==================== Contacts Tab ====================
 function ContactsTab({
-  dataMonth, monthlyContacts, funnelData, leadTime, records,
+  dataMonth, monthlyContacts, funnelData, leadTime, records, prevYear,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   monthlyContacts: ReturnType<typeof getMonthlyContacts>;
   funnelData: ReturnType<typeof getFunnelData>;
   leadTime: ReturnType<typeof getLeadTimeStats>;
   records: HospitalRecord[];
+  prevYear: { funnelData: ReturnType<typeof getFunnelData>; leadTime: ReturnType<typeof getLeadTimeStats> } | null;
 }) {
   const contactsByPatient = new Map<string, number>();
   for (const r of records) {
@@ -607,10 +654,10 @@ function ContactsTab({
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="総コンタクト数" value={funnelData[0].count} />
-        <StatCard label="面談実施数" value={funnelData[3].count} color="text-blue-600" />
-        <StatCard label="平均リードタイム" value={`${leadTime.avg}日`} sub={`中央値: ${leadTime.median}日 / 最短: ${leadTime.min}日`} />
-        <StatCard label="最長リードタイム" value={`${leadTime.max}日`} color="text-orange-500" />
+        <StatCard label="総コンタクト数" value={funnelData[0].count} prevValue={prevYear?.funnelData[0].count} unit="件" />
+        <StatCard label="面談実施数" value={funnelData[3].count} color="text-blue-600" prevValue={prevYear?.funnelData[3].count} unit="件" />
+        <StatCard label="平均リードタイム" value={`${leadTime.avg}日`} sub={`中央値: ${leadTime.median}日 / 最短: ${leadTime.min}日`} prevValue={prevYear?.leadTime.avg} unit="日" isLowerBetter />
+        <StatCard label="最長リードタイム" value={`${leadTime.max}日`} color="text-orange-500" prevValue={prevYear?.leadTime.max} unit="日" isLowerBetter />
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -1118,7 +1165,7 @@ function PointBox({ type, children }: { type: "success" | "warning" | "danger" |
 function AITab({
   dataMonth, records, sourceCVData, monthlyAdmissions, leadTime, cancelReasons,
   overallCVR, totalAdmitted, totalRecords, kpAddressData, notesAnalysis,
-  crossAnalysis, funnelData, statusDist,
+  crossAnalysis, funnelData, statusDist, prevYear,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   records: HospitalRecord[];
@@ -1134,6 +1181,7 @@ function AITab({
   crossAnalysis: CrossAnalysisResult;
   funnelData: ReturnType<typeof getFunnelData>;
   statusDist: ReturnType<typeof getStatusDistribution>;
+  prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; leadTime: ReturnType<typeof getLeadTimeStats>; sourceCVData: ReturnType<typeof getSourceCVData>; funnelData: ReturnType<typeof getFunnelData>; cancelReasons: ReturnType<typeof getCancelReasonData>; kpAddressData: ReturnType<typeof getKPAddressData> } | null;
 }) {
   const reportRef = useRef<HTMLDivElement>(null);
   const [exportStatus, setExportStatus] = useState<"idle" | "pdf" | "kintone" | "done" | "error">("idle");
@@ -1164,6 +1212,14 @@ function AITab({
         competitors: notesAnalysis.competitors,
         goldenPaths: crossAnalysis.goldenPaths,
         riskPatterns: crossAnalysis.riskPatterns,
+        prevYear: prevYear ? {
+          totalRecords: prevYear.totalRecords,
+          totalAdmitted: prevYear.totalAdmitted,
+          overallCVR: prevYear.overallCVR,
+          leadTime: prevYear.leadTime,
+          funnelData: prevYear.funnelData,
+          cancelReasons: prevYear.cancelReasons,
+        } : null,
       };
 
       const res = await fetch("/api/analyze", {
@@ -1348,17 +1404,28 @@ function AITab({
         </h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
           {[
-            { label: "総問い合わせ", value: `${totalRecords}件`, sub: "分析期間全体", color: "from-gray-600 to-gray-700" },
-            { label: "入院数（CV）", value: `${totalAdmitted}件`, sub: `${dataMonth.label}: ${recentAvg}件`, color: "from-green-500 to-emerald-600" },
-            { label: "全体CVR", value: `${overallCVR}%`, sub: `${totalAdmitted} / ${totalRecords}`, color: "from-blue-500 to-blue-600" },
-            { label: "平均リードタイム", value: `${leadTime.avg}日`, sub: `中央値 ${leadTime.median}日`, color: "from-violet-500 to-purple-600" },
-          ].map((kpi) => (
+            { label: "総問い合わせ", value: `${totalRecords}件`, sub: "分析期間全体", color: "from-gray-600 to-gray-700", prev: prevYear?.totalRecords, unit: "件" },
+            { label: "入院数（CV）", value: `${totalAdmitted}件`, sub: `${dataMonth.label}: ${recentAvg}件`, color: "from-green-500 to-emerald-600", prev: prevYear?.totalAdmitted, unit: "件" },
+            { label: "全体CVR", value: `${overallCVR}%`, sub: `${totalAdmitted} / ${totalRecords}`, color: "from-blue-500 to-blue-600", prev: prevYear?.overallCVR, unit: "%" },
+            { label: "平均リードタイム", value: `${leadTime.avg}日`, sub: `中央値 ${leadTime.median}日`, color: "from-violet-500 to-purple-600", prev: prevYear?.leadTime.avg, unit: "日", lower: true },
+          ].map((kpi) => {
+            const currentNum = parseFloat(kpi.value);
+            const diff = kpi.prev != null && !isNaN(currentNum) ? currentNum - kpi.prev : null;
+            const pct = kpi.prev != null && kpi.prev !== 0 && diff != null ? Math.round((diff / kpi.prev) * 100) : null;
+            const isGood = diff != null ? (kpi.lower ? diff < 0 : diff > 0) : null;
+            return (
             <div key={kpi.label} className={`bg-gradient-to-br ${kpi.color} rounded-xl p-4 text-white`}>
               <p className="text-xs opacity-80 mb-1">{kpi.label}</p>
               <p className="text-2xl font-bold">{kpi.value}</p>
               <p className="text-[11px] opacity-70 mt-1">{kpi.sub}</p>
+              {pct != null && (
+                <p className={`text-[11px] mt-1 font-medium ${isGood ? "text-green-200" : "text-red-200"}`}>
+                  {diff! > 0 ? "↑" : diff! < 0 ? "↓" : "→"} 前年比 {pct >= 0 ? "+" : ""}{pct}%（{kpi.prev}{kpi.unit}）
+                </p>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
