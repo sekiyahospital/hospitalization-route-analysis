@@ -373,6 +373,7 @@ export default function Home() {
               preAdmissionLoc={analysisData.preAdmissionLoc}
               prevYear={prevYearData}
               aiInsights={aiInsights?.overview}
+              aiStatus={aiGlobalStatus}
             />
           )}
           {analysisData && activeTab === "cv" && (
@@ -383,6 +384,7 @@ export default function Home() {
               monthlyAdmissions={analysisData.monthlyAdmissions}
               prevYear={prevYearData}
               aiInsights={aiInsights?.cv}
+              aiStatus={aiGlobalStatus}
             />
           )}
           {analysisData && activeTab === "contacts" && (
@@ -394,11 +396,12 @@ export default function Home() {
               records={filteredRecords}
               prevYear={prevYearData}
               aiInsights={aiInsights?.contacts}
+              aiStatus={aiGlobalStatus}
             />
           )}
-          {analysisData && activeTab === "notes" && <NotesTab notesAnalysis={analysisData.notesAnalysis} aiInsights={aiInsights?.notes} />}
-          {analysisData && activeTab === "cross" && <CrossAnalysisTab crossAnalysis={analysisData.crossAnalysis} aiInsights={aiInsights?.cross} />}
-          {analysisData && activeTab === "map" && <MapTab kpAddressData={analysisData.kpAddressData} totalAdmitted={analysisData.totalAdmitted} aiInsights={aiInsights?.map} />}
+          {analysisData && activeTab === "notes" && <NotesTab notesAnalysis={analysisData.notesAnalysis} aiInsights={aiInsights?.notes} aiStatus={aiGlobalStatus} />}
+          {analysisData && activeTab === "cross" && <CrossAnalysisTab crossAnalysis={analysisData.crossAnalysis} aiInsights={aiInsights?.cross} aiStatus={aiGlobalStatus} />}
+          {analysisData && activeTab === "map" && <MapTab kpAddressData={analysisData.kpAddressData} totalAdmitted={analysisData.totalAdmitted} aiInsights={aiInsights?.map} aiStatus={aiGlobalStatus} />}
           {analysisData && activeTab === "ai" && (
             <AITab
               dataMonth={analysisData.dataMonth}
@@ -454,7 +457,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 // ==================== Overview Tab ====================
 function OverviewTab({
   dataMonth, totalRecords, totalAdmitted, overallCVR, leadTime,
-  monthlyAdmissions, statusDist, routeData, funnelData, preAdmissionLoc, prevYear, aiInsights,
+  monthlyAdmissions, statusDist, routeData, funnelData, preAdmissionLoc, prevYear, aiInsights, aiStatus,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   totalRecords: number;
@@ -468,6 +471,7 @@ function OverviewTab({
   preAdmissionLoc: ReturnType<typeof getPreAdmissionLocationData>;
   prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; leadTime: ReturnType<typeof getLeadTimeStats> } | null;
   aiInsights?: AIInsights["overview"];
+  aiStatus: "idle" | "loading" | "done" | "error";
 }) {
   return (
     <div className="space-y-6">
@@ -489,7 +493,7 @@ function OverviewTab({
             <Bar dataKey="count" fill="#1e40af" radius={[4, 4, 0, 0]} name="入院数" />
           </BarChart>
         </ResponsiveContainer>
-        {aiInsights?.dailyAdmissions && <PointBox type="info" isAI>{aiInsights.dailyAdmissions}</PointBox>}
+        {aiInsights?.dailyAdmissions ? <PointBox type="info" isAI>{aiInsights.dailyAdmissions}</PointBox> : <AIPlaceholder status={aiStatus} />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -506,7 +510,7 @@ function OverviewTab({
               <Tooltip formatter={(value) => [`${value}件`]} />
             </PieChart>
           </ResponsiveContainer>
-          {aiInsights?.statusDist && <PointBox type="info" isAI>{aiInsights.statusDist}</PointBox>}
+          {aiInsights?.statusDist ? <PointBox type="info" isAI>{aiInsights.statusDist}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -531,7 +535,7 @@ function OverviewTab({
               );
             })}
           </div>
-          {aiInsights?.funnel && <PointBox type="info" isAI>{aiInsights.funnel}</PointBox>}
+          {aiInsights?.funnel ? <PointBox type="info" isAI>{aiInsights.funnel}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
       </div>
 
@@ -547,7 +551,7 @@ function OverviewTab({
               <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.referralRoute && <PointBox type="info" isAI>{aiInsights.referralRoute}</PointBox>}
+          {aiInsights?.referralRoute ? <PointBox type="info" isAI>{aiInsights.referralRoute}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -563,7 +567,7 @@ function OverviewTab({
               <Tooltip formatter={(value) => [`${value}件`]} />
             </PieChart>
           </ResponsiveContainer>
-          {aiInsights?.preAdmissionLoc && <PointBox type="info" isAI>{aiInsights.preAdmissionLoc}</PointBox>}
+          {aiInsights?.preAdmissionLoc ? <PointBox type="info" isAI>{aiInsights.preAdmissionLoc}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
       </div>
     </div>
@@ -572,7 +576,7 @@ function OverviewTab({
 
 // ==================== CV Analysis Tab ====================
 function CVTab({
-  dataMonth, sourceCVData, monthlyAdmissions, cancelReasons, records, prevYear, aiInsights,
+  dataMonth, sourceCVData, monthlyAdmissions, cancelReasons, records, prevYear, aiInsights, aiStatus,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   sourceCVData: ReturnType<typeof getSourceCVData>;
@@ -581,6 +585,7 @@ function CVTab({
   records: HospitalRecord[];
   prevYear: { totalRecords: number; totalAdmitted: number; overallCVR: number; sourceCVData: ReturnType<typeof getSourceCVData>; cancelReasons: ReturnType<typeof getCancelReasonData> } | null;
   aiInsights?: AIInsights["cv"];
+  aiStatus: "idle" | "loading" | "done" | "error";
 }) {
   const top20Sources = sourceCVData.slice(0, 20);
   const { data: sourceMonthly, sources: allSources } = getSourceMonthlyTrend(records, 15, dataMonth);
@@ -637,7 +642,7 @@ function CVTab({
             )}
           </LineChart>
         </ResponsiveContainer>
-        {aiInsights?.sourceMonthly && <PointBox type="info" isAI>{aiInsights.sourceMonthly}</PointBox>}
+        {aiInsights?.sourceMonthly ? <PointBox type="info" isAI>{aiInsights.sourceMonthly}</PointBox> : <AIPlaceholder status={aiStatus} />}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -672,7 +677,7 @@ function CVTab({
             </tbody>
           </table>
         </div>
-        {aiInsights?.sourceTable && <PointBox type="success" isAI>{aiInsights.sourceTable}</PointBox>}
+        {aiInsights?.sourceTable ? <PointBox type="success" isAI>{aiInsights.sourceTable}</PointBox> : <AIPlaceholder status={aiStatus} />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -687,7 +692,7 @@ function CVTab({
               <Line type="monotone" dataKey="count" stroke="#1e40af" strokeWidth={2} dot={{ fill: "#1e40af", r: 4 }} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
-          {aiInsights?.dailyTrend && <PointBox type="info" isAI>{aiInsights.dailyTrend}</PointBox>}
+          {aiInsights?.dailyTrend ? <PointBox type="info" isAI>{aiInsights.dailyTrend}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -701,7 +706,7 @@ function CVTab({
               <Bar dataKey="value" fill="#dc2626" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.cancelReasons && <PointBox type="danger" isAI>{aiInsights.cancelReasons}</PointBox>}
+          {aiInsights?.cancelReasons ? <PointBox type="danger" isAI>{aiInsights.cancelReasons}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
       </div>
     </div>
@@ -710,7 +715,7 @@ function CVTab({
 
 // ==================== Contacts Tab ====================
 function ContactsTab({
-  dataMonth, monthlyContacts, funnelData, leadTime, records, prevYear, aiInsights,
+  dataMonth, monthlyContacts, funnelData, leadTime, records, prevYear, aiInsights, aiStatus,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   monthlyContacts: ReturnType<typeof getMonthlyContacts>;
@@ -719,6 +724,7 @@ function ContactsTab({
   records: HospitalRecord[];
   prevYear: { funnelData: ReturnType<typeof getFunnelData>; leadTime: ReturnType<typeof getLeadTimeStats> } | null;
   aiInsights?: AIInsights["contacts"];
+  aiStatus: "idle" | "loading" | "done" | "error";
 }) {
   const contactsByPatient = new Map<string, number>();
   for (const r of records) {
@@ -763,7 +769,7 @@ function ContactsTab({
             <Bar dataKey="admissions" fill="#059669" name="入院数" radius={[4, 4, 0, 0]} />
           </ComposedChart>
         </ResponsiveContainer>
-        {aiInsights?.dailyContacts && <PointBox type="info" isAI>{aiInsights.dailyContacts}</PointBox>}
+        {aiInsights?.dailyContacts ? <PointBox type="info" isAI>{aiInsights.dailyContacts}</PointBox> : <AIPlaceholder status={aiStatus} />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -778,7 +784,7 @@ function ContactsTab({
               <Bar dataKey="patients" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="患者数" />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.touchPoints && <PointBox type="info" isAI>{aiInsights.touchPoints}</PointBox>}
+          {aiInsights?.touchPoints ? <PointBox type="info" isAI>{aiInsights.touchPoints}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -808,7 +814,7 @@ function ContactsTab({
               );
             })}
           </div>
-          {aiInsights?.funnelDetail && <PointBox type="info" isAI>{aiInsights.funnelDetail}</PointBox>}
+          {aiInsights?.funnelDetail ? <PointBox type="info" isAI>{aiInsights.funnelDetail}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
       </div>
     </div>
@@ -817,11 +823,12 @@ function ContactsTab({
 
 // ==================== Map Tab ====================
 function MapTab({
-  kpAddressData, totalAdmitted, aiInsights,
+  kpAddressData, totalAdmitted, aiInsights, aiStatus,
 }: {
   kpAddressData: ReturnType<typeof getKPAddressData>;
   totalAdmitted: number;
   aiInsights?: AIInsights["map"];
+  aiStatus: "idle" | "loading" | "done" | "error";
 }) {
   const top20 = kpAddressData.slice(0, 20);
   const maxCount = top20.length > 0 ? top20[0].count : 1;
@@ -848,7 +855,7 @@ function MapTab({
           </span>
         </p>
         <HospitalMap locations={geoLocations} />
-        {aiInsights?.geoDistribution && <PointBox type="info" isAI>{aiInsights.geoDistribution}</PointBox>}
+        {aiInsights?.geoDistribution ? <PointBox type="info" isAI>{aiInsights.geoDistribution}</PointBox> : <AIPlaceholder status={aiStatus} />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -883,7 +890,7 @@ function MapTab({
               <Bar dataKey="count" fill="#1e40af" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.topAreas && <PointBox type="success" isAI>{aiInsights.topAreas}</PointBox>}
+          {aiInsights?.topAreas ? <PointBox type="success" isAI>{aiInsights.topAreas}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
       </div>
     </div>
@@ -891,7 +898,7 @@ function MapTab({
 }
 
 // ==================== Notes Analysis Tab ====================
-function NotesTab({ notesAnalysis, aiInsights }: { notesAnalysis: NotesAnalysisResult; aiInsights?: AIInsights["notes"] }) {
+function NotesTab({ notesAnalysis, aiInsights, aiStatus }: { notesAnalysis: NotesAnalysisResult; aiInsights?: AIInsights["notes"]; aiStatus: "idle" | "loading" | "done" | "error" }) {
   const { selectionReasons, cancelPatterns, medicalNeeds, competitors, improvableCancels } = notesAnalysis;
 
   return (
@@ -925,7 +932,7 @@ function NotesTab({ notesAnalysis, aiInsights }: { notesAnalysis: NotesAnalysisR
               <Bar dataKey="count" fill="#059669" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.selectionReasons && <PointBox type="success" isAI>{aiInsights.selectionReasons}</PointBox>}
+          {aiInsights?.selectionReasons ? <PointBox type="success" isAI>{aiInsights.selectionReasons}</PointBox> : <AIPlaceholder status={aiStatus} />}
           <div className="mt-4 space-y-2">
             {selectionReasons.slice(0, 3).map((r) => (
               <div key={r.label} className="bg-green-50 rounded-lg p-3">
@@ -949,7 +956,7 @@ function NotesTab({ notesAnalysis, aiInsights }: { notesAnalysis: NotesAnalysisR
               <Bar dataKey="count" fill="#dc2626" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.cancelPatterns && <PointBox type="danger" isAI>{aiInsights.cancelPatterns}</PointBox>}
+          {aiInsights?.cancelPatterns ? <PointBox type="danger" isAI>{aiInsights.cancelPatterns}</PointBox> : <AIPlaceholder status={aiStatus} />}
           <div className="mt-4 space-y-2">
             {cancelPatterns.slice(0, 3).map((r) => (
               <div key={r.label} className="bg-red-50 rounded-lg p-3">
@@ -975,7 +982,7 @@ function NotesTab({ notesAnalysis, aiInsights }: { notesAnalysis: NotesAnalysisR
               <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-          {aiInsights?.medicalNeeds && <PointBox type="info" isAI>{aiInsights.medicalNeeds}</PointBox>}
+          {aiInsights?.medicalNeeds ? <PointBox type="info" isAI>{aiInsights.medicalNeeds}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -996,7 +1003,7 @@ function NotesTab({ notesAnalysis, aiInsights }: { notesAnalysis: NotesAnalysisR
               </div>
             ))}
           </div>
-          {aiInsights?.competitors && <PointBox type="warning" isAI>{aiInsights.competitors}</PointBox>}
+          {aiInsights?.competitors ? <PointBox type="warning" isAI>{aiInsights.competitors}</PointBox> : <AIPlaceholder status={aiStatus} />}
         </div>
       </div>
 
@@ -1078,7 +1085,7 @@ function CrossTableView({ table }: { table: CrossTable }) {
   );
 }
 
-function CrossAnalysisTab({ crossAnalysis, aiInsights }: { crossAnalysis: CrossAnalysisResult; aiInsights?: AIInsights["cross"] }) {
+function CrossAnalysisTab({ crossAnalysis, aiInsights, aiStatus }: { crossAnalysis: CrossAnalysisResult; aiInsights?: AIInsights["cross"]; aiStatus: "idle" | "loading" | "done" | "error" }) {
   const { overallCVR, sourceByLocation, routeByLocation, leadTimeByCVR, touchPointByCVR, factorRanking, goldenPaths, riskPatterns } = crossAnalysis;
   const topFactors = factorRanking.filter((f) => f.lift >= 1.1).slice(0, 12);
   const bottomFactors = factorRanking.filter((f) => f.lift < 0.9 && f.total >= 5).sort((a, b) => a.lift - b.lift).slice(0, 8);
@@ -1148,7 +1155,7 @@ function CrossAnalysisTab({ crossAnalysis, aiInsights }: { crossAnalysis: CrossA
             </div>
           </div>
         </div>
-        {aiInsights?.factorRanking && <PointBox type="info" isAI>{aiInsights.factorRanking}</PointBox>}
+        {aiInsights?.factorRanking ? <PointBox type="info" isAI>{aiInsights.factorRanking}</PointBox> : <AIPlaceholder status={aiStatus} />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1191,7 +1198,7 @@ function CrossAnalysisTab({ crossAnalysis, aiInsights }: { crossAnalysis: CrossA
 
       <CrossTableView table={sourceByLocation} />
       <CrossTableView table={routeByLocation} />
-      {aiInsights?.heatmaps && <PointBox type="info" isAI>{aiInsights.heatmaps}</PointBox>}
+      {aiInsights?.heatmaps ? <PointBox type="info" isAI>{aiInsights.heatmaps}</PointBox> : <AIPlaceholder status={aiStatus} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -1234,12 +1241,10 @@ function CrossAnalysisTab({ crossAnalysis, aiInsights }: { crossAnalysis: CrossA
           </div>
         </div>
       </div>
-      {(aiInsights?.goldenPaths || aiInsights?.riskPatterns) && (
-        <div className="space-y-2">
-          {aiInsights?.goldenPaths && <PointBox type="success" isAI>{aiInsights.goldenPaths}</PointBox>}
-          {aiInsights?.riskPatterns && <PointBox type="danger" isAI>{aiInsights.riskPatterns}</PointBox>}
-        </div>
-      )}
+      <div className="space-y-2">
+        {aiInsights?.goldenPaths ? <PointBox type="success" isAI>{aiInsights.goldenPaths}</PointBox> : <AIPlaceholder status={aiStatus} />}
+        {aiInsights?.riskPatterns ? <PointBox type="danger" isAI>{aiInsights.riskPatterns}</PointBox> : <AIPlaceholder status={aiStatus} />}
+      </div>
 
       <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl p-6 text-white">
         <h3 className="text-lg font-bold mb-3 flex items-center gap-2"><span>🎯</span>クロス分析から導くアクション</h3>
@@ -1255,6 +1260,25 @@ function CrossAnalysisTab({ crossAnalysis, aiInsights }: { crossAnalysis: CrossA
 }
 
 // ==================== AI Analysis Tab ====================
+function AIPlaceholder({ status }: { status: "idle" | "loading" | "done" | "error" }) {
+  if (status === "done") return null;
+  return (
+    <div className="bg-violet-50 border border-dashed border-violet-300 rounded-lg p-4 flex items-center gap-3">
+      {status === "loading" ? (
+        <>
+          <span className="animate-spin w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full" />
+          <span className="text-sm text-violet-600">AI分析中...</span>
+        </>
+      ) : (
+        <>
+          <span className="text-lg">🤖</span>
+          <span className="text-sm text-violet-500">ヘッダーの「AI分析」ボタンを押すと、AIによる分析コメントが表示されます</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PointBox({ type, children, isAI }: { type: "success" | "warning" | "danger" | "info"; children: React.ReactNode; isAI?: boolean }) {
   const styles = {
     success: { bg: "bg-emerald-50 border-emerald-400", label: "GOOD POINT", labelBg: "bg-emerald-600" },

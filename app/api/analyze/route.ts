@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+export const maxDuration = 60;
+
 const client = new Anthropic();
 
 const SYSTEM_PROMPT_PARTS: Anthropic.Messages.TextBlockParam[] = [
@@ -150,27 +152,39 @@ export async function POST(request: Request) {
   ]
 }`;
 
-      const response = await client.messages.create({
-        model: "claude-sonnet-4-6",
+      const stream = await client.messages.stream({
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 4096,
         system: SYSTEM_PROMPT_PARTS,
         messages: [{ role: "user", content: sectionPrompt }],
       });
 
       let jsonText = "";
-      for (const block of response.content) {
-        if (block.type === "text") jsonText += block.text;
+      for await (const event of stream) {
+        if (event.type === "content_block_delta") {
+          const delta = event.delta;
+          if ("text" in delta && delta.text) {
+            jsonText += delta.text;
+          }
+        }
       }
 
       const cleaned = jsonText.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
       const startIdx = cleaned.indexOf("{");
       const endIdx = cleaned.lastIndexOf("}");
       if (startIdx === -1 || endIdx === -1) {
-        return Response.json({ error: "Failed to parse AI response" }, { status: 500 });
+        return Response.json({ error: "Failed to parse AI response", raw: cleaned.slice(0, 200) }, { status: 500 });
       }
 
-      const parsed = JSON.parse(cleaned.slice(startIdx, endIdx + 1));
-      const usage = response.usage;
+      let parsed;
+      try {
+        parsed = JSON.parse(cleaned.slice(startIdx, endIdx + 1));
+      } catch (e) {
+        return Response.json({ error: `JSON parse error: ${e}`, raw: cleaned.slice(startIdx, startIdx + 300) }, { status: 500 });
+      }
+
+      const finalMessage = await stream.finalMessage();
+      const usage = finalMessage.usage;
       return Response.json({
         sections: parsed,
         usage: {
