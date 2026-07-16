@@ -94,8 +94,8 @@ export async function POST(request: Request) {
     if (mode === "sections") {
       const sectionPrompt = `${dataContext}
 
-上記データに基づいて、以下のJSON形式で全タブの分析コメントとネクストアクションを出力してください。
-各コメントは1-2文で、具体的な数値を含めてください。JSONのみを出力し、他のテキストは含めないでください。
+上記データに基づいて、以下のJSON形式で分析コメントとネクストアクションを出力してください。
+各コメントは必ず1文（50文字以内）で、具体的な数値を1つ含めてください。簡潔に。JSONのみを出力し、他のテキストは含めないでください。
 
 {
   "overview": {
@@ -154,7 +154,7 @@ export async function POST(request: Request) {
 
       const stream = await client.messages.stream({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: SYSTEM_PROMPT_PARTS,
         messages: [{ role: "user", content: sectionPrompt }],
       });
