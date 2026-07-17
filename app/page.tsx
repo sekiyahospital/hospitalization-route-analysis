@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
+import ReactMarkdown from "react-markdown";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LineChart, Line, ComposedChart, Area,
@@ -1329,7 +1330,6 @@ function AITab({
     setAiStatus("loading");
     setAiResponse("");
     setAiUsage(null);
-
     try {
       const monthlyData = {
         year: dataMonth.year, month: dataMonth.month,
@@ -1345,7 +1345,6 @@ function AITab({
           funnelData: prevYear.funnelData, cancelReasons: prevYear.cancelReasons,
         } : null,
       };
-
       const res = await fetch("/api/analyze", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ monthlyData }),
@@ -1383,24 +1382,15 @@ function AITab({
       setExportStatus("pdf");
       const html2canvas = (await import("html2canvas-pro")).default;
       const { jsPDF } = await import("jspdf");
-
       const el = reportRef.current;
-      const canvas = await html2canvas(el, {
-        scale: 1.5,
-        useCORS: true,
-        backgroundColor: "#f8fafc",
-        logging: false,
-      });
-
+      const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, backgroundColor: "#ffffff", logging: false });
       const imgWidth = 210;
       const pageHeight = 297;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
       const pdf = new jsPDF("p", "mm", "a4");
-
       let heightLeft = imgHeight;
       let position = 0;
       const imgData = canvas.toDataURL("image/jpeg", 0.92);
-
       pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
       heightLeft -= pageHeight;
       while (heightLeft > 0) {
@@ -1409,10 +1399,7 @@ function AITab({
         pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
         heightLeft -= pageHeight;
       }
-
-      const fileName = `関屋病院_AI分析レポート_${dataMonth.year}年${dataMonth.month}月.pdf`;
-      pdf.save(fileName);
-
+      pdf.save(`関屋病院_月次分析レポート_${dataMonth.year}年${dataMonth.month}月.pdf`);
       setExportStatus("kintone");
       await new Promise((r) => setTimeout(r, 1500));
       setExportStatus("done");
@@ -1427,11 +1414,8 @@ function AITab({
   const highCVRSources = sourceCVData.filter((s) => s.totalContacts >= 5).sort((a, b) => b.cvr - a.cvr).slice(0, 7);
   const lowCVRSources = sourceCVData.filter((s) => s.totalContacts >= 5).sort((a, b) => a.cvr - b.cvr).slice(0, 5);
   const topAreas = kpAddressData.slice(0, 7);
-
   const recentAvg = monthlyAdmissions.reduce((s, m) => s + m.count, 0);
-  const priorAvg = recentAvg;
-  const trendPct = priorAvg > 0 ? Math.round(((recentAvg - priorAvg) / priorAvg) * 100) : 0;
-  const trend = recentAvg > priorAvg ? "増加" : recentAvg < priorAvg ? "減少" : "横ばい";
+  const trend = recentAvg > 0 ? "横ばい" : "横ばい";
 
   const cvrChartData = highCVRSources.map(s => ({
     name: s.source.length > 8 ? s.source.slice(0, 8) + "…" : s.source,
@@ -1448,404 +1432,388 @@ function AITab({
     name: a.address.length > 8 ? a.address.slice(0, 8) + "…" : a.address, 件数: a.count,
   }));
 
+  const SectionDivider = ({ num, title, accent }: { num: string; title: string; accent: string }) => (
+    <div className="flex items-center gap-4 pt-2 pb-1">
+      <div className={`w-10 h-10 rounded-full ${accent} flex items-center justify-center text-white text-sm font-bold shrink-0`}>{num}</div>
+      <div className="flex-1">
+        <h3 className="text-[17px] font-bold text-gray-900 tracking-tight">{title}</h3>
+        <div className="h-[2px] bg-gradient-to-r from-gray-300 to-transparent mt-1.5" />
+      </div>
+    </div>
+  );
+
+  const Metric = ({ label, value, sub, delta, isLower }: { label: string; value: string; sub: string; delta?: number | null; isLower?: boolean }) => {
+    const isGood = delta != null ? (isLower ? delta < 0 : delta > 0) : null;
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
+        <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wider mb-1">{label}</p>
+        <p className="text-3xl font-extrabold text-gray-900 leading-none">{value}</p>
+        <p className="text-[11px] text-gray-400 mt-1.5">{sub}</p>
+        {delta != null && (
+          <p className={`text-xs font-bold mt-1 ${isGood ? "text-emerald-600" : "text-red-500"}`}>
+            {delta > 0 ? "+" : ""}{delta}%<span className="text-gray-400 font-normal"> YoY</span>
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  const yoyPct = (cur: number, prev: number | undefined | null) =>
+    prev != null && prev !== 0 ? Math.round(((cur - prev) / prev) * 100) : null;
+
   return (
-    <div className="space-y-6">
-      {/* Export Button Bar */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-5 py-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          </div>
-          <div>
-            <p className="text-sm font-bold text-gray-800">レポート出力</p>
-            <p className="text-xs text-gray-500">{dataMonth.year}年{dataMonth.label}分のAI分析レポートをPDF化してキントーンに格納</p>
-          </div>
+          <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          <span className="text-sm text-gray-600">{dataMonth.year}年{dataMonth.label}分レポート</span>
         </div>
         <div className="flex items-center gap-3">
           {exportStatus !== "idle" && (
-            <div className="flex items-center gap-2 text-sm">
-              {exportStatus === "pdf" && (
-                <><span className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></span><span className="text-blue-600 font-medium">PDF作成中...</span></>
-              )}
-              {exportStatus === "kintone" && (
-                <><span className="animate-spin w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full"></span><span className="text-green-600 font-medium">キントーンに格納中...</span></>
-              )}
-              {exportStatus === "done" && (
-                <span className="flex items-center gap-1.5 text-green-600 font-medium">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  PDF作成・キントーン格納完了
-                </span>
-              )}
-              {exportStatus === "error" && (
-                <span className="text-red-500 font-medium">エラーが発生しました</span>
-              )}
-            </div>
+            <span className="text-sm font-medium">
+              {exportStatus === "pdf" && <span className="text-blue-600">PDF作成中...</span>}
+              {exportStatus === "kintone" && <span className="text-green-600">キントーン格納中...</span>}
+              {exportStatus === "done" && <span className="text-green-600">完了</span>}
+              {exportStatus === "error" && <span className="text-red-500">エラー</span>}
+            </span>
           )}
-          <button
-            onClick={handleExport}
-            disabled={exportStatus !== "idle"}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm ${
-              exportStatus !== "idle"
-                ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 hover:shadow-md active:scale-[0.98]"
-            }`}
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            PDF作成・キントーン格納
+          <button onClick={handleExport} disabled={exportStatus !== "idle"}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${exportStatus !== "idle" ? "bg-gray-100 text-gray-400" : "bg-gray-900 text-white hover:bg-gray-800"}`}>
+            PDF出力 / キントーン格納
           </button>
         </div>
       </div>
 
-      <div ref={reportRef} className="space-y-6">
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-6 text-white">
-        <div className="flex items-center gap-3 mb-2"><span className="text-2xl">🤖</span><h2 className="text-xl font-bold">AI分析レポート</h2></div>
-        <p className="text-blue-100 text-sm">{dataMonth.year}年{dataMonth.label} {totalRecords}件のデータに基づく入院経路分析・傾向サマリー・ネクストアクション提案</p>
-      </div>
-
-      {/* Section 1: KPI */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 text-sm font-bold">1</span>経営KPIサマリー
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-          {[
-            { label: "総問い合わせ", value: `${totalRecords}件`, sub: "分析期間全体", color: "from-gray-600 to-gray-700", prev: prevYear?.totalRecords, unit: "件" },
-            { label: "入院数（CV）", value: `${totalAdmitted}件`, sub: `${dataMonth.label}: ${recentAvg}件`, color: "from-green-500 to-emerald-600", prev: prevYear?.totalAdmitted, unit: "件" },
-            { label: "全体CVR", value: `${overallCVR}%`, sub: `${totalAdmitted} / ${totalRecords}`, color: "from-blue-500 to-blue-600", prev: prevYear?.overallCVR, unit: "%" },
-            { label: "平均リードタイム", value: `${leadTime.avg}日`, sub: `中央値 ${leadTime.median}日`, color: "from-violet-500 to-purple-600", prev: prevYear?.leadTime.avg, unit: "日", lower: true },
-          ].map((kpi) => {
-            const currentNum = parseFloat(kpi.value);
-            const diff = kpi.prev != null && !isNaN(currentNum) ? currentNum - kpi.prev : null;
-            const pct = kpi.prev != null && kpi.prev !== 0 && diff != null ? Math.round((diff / kpi.prev) * 100) : null;
-            const isGood = diff != null ? (kpi.lower ? diff < 0 : diff > 0) : null;
-            return (
-            <div key={kpi.label} className={`bg-gradient-to-br ${kpi.color} rounded-xl p-4 text-white`}>
-              <p className="text-xs opacity-80 mb-1">{kpi.label}</p>
-              <p className="text-2xl font-bold">{kpi.value}</p>
-              <p className="text-[11px] opacity-70 mt-1">{kpi.sub}</p>
-              {pct != null && (
-                <p className={`text-[11px] mt-1 font-medium ${isGood ? "text-green-200" : "text-red-200"}`}>
-                  {diff! > 0 ? "↑" : diff! < 0 ? "↓" : "→"} 前年比 {pct >= 0 ? "+" : ""}{pct}%（{kpi.prev}{kpi.unit}）
-                </p>
-              )}
-            </div>
-            );
-          })}
+      {/* Report Body */}
+      <div ref={reportRef} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        {/* Cover */}
+        <div className="bg-gray-900 px-8 py-10 text-white">
+          <div className="flex items-center justify-between mb-6">
+            <div className="text-[11px] tracking-[0.2em] text-gray-400 uppercase">Monthly Performance Report</div>
+            <div className="text-[11px] tracking-wider text-gray-400">CONFIDENTIAL</div>
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight mb-2">関屋病院 入院経路分析レポート</h2>
+          <p className="text-gray-400 text-sm">{dataMonth.year}年{dataMonth.label} | 総問い合わせ {totalRecords}件 | 入院 {totalAdmitted}件 | CVR {overallCVR}%</p>
+          <div className="flex items-center gap-6 mt-6 pt-5 border-t border-gray-700">
+            {[
+              { l: "問い合わせ", v: `${totalRecords}`, u: "件", prev: prevYear?.totalRecords },
+              { l: "入院数", v: `${totalAdmitted}`, u: "件", prev: prevYear?.totalAdmitted },
+              { l: "CVR", v: `${overallCVR}`, u: "%", prev: prevYear?.overallCVR },
+              { l: "リードタイム", v: `${leadTime.avg}`, u: "日", prev: prevYear?.leadTime.avg, lower: true },
+            ].map(k => {
+              const d = yoyPct(parseFloat(k.v), k.prev);
+              const good = d != null ? (k.lower ? d < 0 : d > 0) : null;
+              return (
+                <div key={k.l}>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider">{k.l}</p>
+                  <p className="text-2xl font-bold">{k.v}<span className="text-sm text-gray-400 ml-0.5">{k.u}</span></p>
+                  {d != null && <p className={`text-xs font-medium ${good ? "text-emerald-400" : "text-red-400"}`}>{d > 0 ? "+" : ""}{d}% YoY</p>}
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <div className="px-8 py-8 space-y-8">
+          {/* Section 1: KPI + Funnel */}
           <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-3">{dataMonth.label} 日別入院数</h4>
-            <div className="h-[200px]">
+            <SectionDivider num="01" title="経営KPIサマリー" accent="bg-blue-600" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-5">
+              <div>
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">{dataMonth.label} 日別入院推移</h4>
+                <div className="h-[200px] bg-gray-50 rounded-lg p-3">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={trendChartData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} interval={0} /><YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} /><Tooltip />
+                      <Area type="monotone" dataKey="入院数" fill="#dbeafe" stroke="#3b82f6" strokeWidth={2} />
+                      <Line type="monotone" dataKey="入院数" stroke="#1d4ed8" strokeWidth={2} dot={{ r: 2.5, fill: "#1d4ed8" }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-3 p-3 bg-blue-50 border-l-3 border-blue-500 rounded-r-lg text-sm text-gray-700">
+                  {aiInsights?.ai?.kpiComment || <>{dataMonth.label}は合計<strong>{recentAvg}件</strong>の入院実績。</>}
+                </div>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">コンバージョンファネル</h4>
+                <div className="space-y-2.5">
+                  {funnelData.map((step, i) => {
+                    const maxCount = funnelData[0].count;
+                    const w = maxCount > 0 ? Math.max((step.count / maxCount) * 100, 8) : 0;
+                    const convRate = i > 0 && funnelData[i - 1].count > 0 ? Math.round((step.count / funnelData[i - 1].count) * 100) : 100;
+                    return (
+                      <div key={step.name}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-gray-600 font-medium">{step.name}</span>
+                          <span className="text-gray-900 font-bold">{step.count}<span className="text-gray-400 font-normal">件</span> {i > 0 && <span className="text-blue-600 ml-1">({convRate}%)</span>}</span>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${w}%`, background: `linear-gradient(90deg, #1e40af, #3b82f6)` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 p-3 bg-blue-50 border-l-3 border-blue-500 rounded-r-lg text-sm text-gray-700">
+                  {aiInsights?.ai?.funnelComment || <>面談→入院の転換率が高く、<strong>面談実施が入院決定の最重要ドライバー</strong>です。</>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: CVR */}
+          <div>
+            <SectionDivider num="02" title="紹介元CVR分析" accent="bg-emerald-600" />
+            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mt-5 mb-3">高CVR紹介元（問い合わせ5件以上）</h4>
+            <div className="h-[260px] bg-gray-50 rounded-lg p-3 mb-4">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={trendChartData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} label={{ value: "日", position: "insideBottomRight", offset: -5, fontSize: 10 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip />
-                  <Area type="monotone" dataKey="入院数" fill="#bfdbfe" stroke="#3b82f6" strokeWidth={2} />
-                  <Line type="monotone" dataKey="入院数" stroke="#1d4ed8" strokeWidth={2} dot={{ r: 3 }} />
+                <ComposedChart data={cvrChartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#6b7280" }} interval={0} angle={-15} textAnchor="end" height={45} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: "#9ca3af" }} /><YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: "#9ca3af" }} />
+                  <Tooltip formatter={(value, name) => [name === "CVR" || name === "全体平均" ? `${value}%` : `${value}件`, name]} />
+                  <Bar yAxisId="left" dataKey="CVR" fill="#059669" radius={[4, 4, 0, 0]} barSize={28} />
+                  <Line yAxisId="right" type="monotone" dataKey="件数" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="avg" stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5} dot={false} name="全体平均" />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
-            <PointBox type={trend === "増加" ? "success" : trend === "減少" ? "danger" : "info"} isAI={!!aiInsights?.ai?.kpiComment}>
-              {aiInsights?.ai?.kpiComment || <>{dataMonth.label}は合計<strong>{recentAvg}件</strong>の入院がありました。</>}
-            </PointBox>
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-3">コンバージョンファネル</h4>
-            <div className="space-y-2 mb-3">
-              {funnelData.map((step, i) => {
-                const maxCount = funnelData[0].count;
-                const w = maxCount > 0 ? Math.max((step.count / maxCount) * 100, 8) : 0;
-                const convRate = i > 0 && funnelData[i - 1].count > 0 ? Math.round((step.count / funnelData[i - 1].count) * 100) : 100;
-                return (
-                  <div key={step.name}>
-                    <div className="flex items-center justify-between text-xs mb-0.5">
-                      <span className="text-gray-600 font-medium">{step.name}</span>
-                      <span className="text-gray-500">{step.count}件 {i > 0 && <span className="text-blue-600">({convRate}%)</span>}</span>
-                    </div>
-                    <div className="w-full bg-gray-100 rounded-full h-5 overflow-hidden">
-                      <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 flex items-center justify-end pr-2 text-[10px] text-white font-bold transition-all" style={{ width: `${w}%` }}>
-                        {w > 15 && step.count}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="p-3 bg-emerald-50 border-l-3 border-emerald-500 rounded-r-lg text-sm text-gray-700 mb-6">
+              {aiInsights?.ai?.cvrHighComment || (highCVRSources[0] && <><strong>{highCVRSources[0].source}</strong>がCVR {highCVRSources[0].cvr}%で最高。全体平均{overallCVR}%の{Math.round(highCVRSources[0].cvr / overallCVR * 10) / 10}倍。</>)}
             </div>
-            <PointBox type="info" isAI={!!aiInsights?.ai?.funnelComment}>
-              {aiInsights?.ai?.funnelComment || <>面談→入院の転換率が最も高く、<strong>面談実施が入院決定の最重要ドライバー</strong>です。問い合わせから面談への誘導率の向上が鍵となります。</>}
-            </PointBox>
-          </div>
-        </div>
-      </div>
 
-      {/* Section 2: CVR */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center text-green-600 text-sm font-bold">2</span>紹介元CVR分析
-        </h3>
-        <h4 className="text-sm font-bold text-gray-700 mb-3">高CVR紹介元（5件以上）</h4>
-        <div className="h-[280px] mb-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={cvrChartData}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
-              <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(value, name) => [name === "CVR" || name === "全体平均CVR" ? `${value}%` : `${value}件`, name]} />
-              <Bar yAxisId="left" dataKey="CVR" fill="#059669" radius={[4, 4, 0, 0]} barSize={32} />
-              <Line yAxisId="right" type="monotone" dataKey="件数" stroke="#6366f1" strokeWidth={2} dot={{ r: 4 }} />
-              <Line yAxisId="left" type="monotone" dataKey="avg" stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5} dot={false} name="全体平均CVR" />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-        <PointBox type="success" isAI={!!aiInsights?.ai?.cvrHighComment}>
-          {aiInsights?.ai?.cvrHighComment || (highCVRSources[0] && (<><strong>{highCVRSources[0].source}</strong>がCVR <strong>{highCVRSources[0].cvr}%</strong> と最も高く、全体平均{overallCVR}%の<strong>{Math.round(highCVRSources[0].cvr / overallCVR * 10) / 10}倍</strong>です。</>))}
-        </PointBox>
-        <h4 className="text-sm font-bold text-gray-700 mt-6 mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span>改善ポテンシャルが大きい紹介元</h4>
-        <div className="overflow-hidden rounded-lg border border-gray-200 mb-4">
-          <table className="w-full text-sm">
-            <thead><tr className="bg-gray-50 border-b border-gray-200">
-              <th className="py-2.5 px-4 text-left font-medium text-gray-500">紹介元</th>
-              <th className="py-2.5 px-4 text-center font-medium text-gray-500">問い合わせ</th>
-              <th className="py-2.5 px-4 text-center font-medium text-gray-500">入院</th>
-              <th className="py-2.5 px-4 text-center font-medium text-gray-500">CVR</th>
-              <th className="py-2.5 px-4 text-center font-medium text-gray-500">改善余地</th>
-            </tr></thead>
-            <tbody>
-              {lowCVRSources.map((s) => {
-                const potential = Math.round(s.totalContacts * (overallCVR / 100) - s.admissions);
-                return (
-                  <tr key={s.source} className="border-b border-gray-50">
-                    <td className="py-2.5 px-4 font-medium text-gray-800">{s.source}</td>
-                    <td className="py-2.5 px-4 text-center text-gray-600">{s.totalContacts}件</td>
-                    <td className="py-2.5 px-4 text-center text-gray-600">{s.admissions}件</td>
-                    <td className="py-2.5 px-4 text-center"><span className="text-orange-600 font-bold">{s.cvr}%</span></td>
-                    <td className="py-2.5 px-4 text-center"><span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">+{Math.max(potential, 0)}件</span></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <PointBox type="warning" isAI={!!aiInsights?.ai?.cvrLowComment}>
-          {aiInsights?.ai?.cvrLowComment || <>低CVR紹介元のCVRを全体平均まで引き上げた場合、<strong>最大+{lowCVRSources.reduce((sum, s) => sum + Math.max(Math.round(s.totalContacts * (overallCVR / 100) - s.admissions), 0), 0)}件の追加入院</strong>が見込めます。</>}
-        </PointBox>
-      </div>
+            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">改善ポテンシャル</h4>
+            <div className="overflow-hidden rounded-lg border border-gray-200 mb-4">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-50">
+                  <th className="py-2.5 px-4 text-left text-xs font-medium text-gray-500 uppercase">紹介元</th>
+                  <th className="py-2.5 px-4 text-center text-xs font-medium text-gray-500">問い合わせ</th>
+                  <th className="py-2.5 px-4 text-center text-xs font-medium text-gray-500">入院</th>
+                  <th className="py-2.5 px-4 text-center text-xs font-medium text-gray-500">CVR</th>
+                  <th className="py-2.5 px-4 text-center text-xs font-medium text-gray-500">改善余地</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-100">
+                  {lowCVRSources.map((s) => (
+                    <tr key={s.source} className="hover:bg-gray-50">
+                      <td className="py-2.5 px-4 font-medium text-gray-800">{s.source}</td>
+                      <td className="py-2.5 px-4 text-center text-gray-600">{s.totalContacts}</td>
+                      <td className="py-2.5 px-4 text-center text-gray-600">{s.admissions}</td>
+                      <td className="py-2.5 px-4 text-center"><span className="text-orange-600 font-bold">{s.cvr}%</span></td>
+                      <td className="py-2.5 px-4 text-center"><span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">+{Math.max(Math.round(s.totalContacts * (overallCVR / 100) - s.admissions), 0)}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-3 bg-amber-50 border-l-3 border-amber-500 rounded-r-lg text-sm text-gray-700">
+              {aiInsights?.ai?.cvrLowComment || <>低CVR紹介元を全体平均まで改善で<strong>+{lowCVRSources.reduce((sum, s) => sum + Math.max(Math.round(s.totalContacts * (overallCVR / 100) - s.admissions), 0), 0)}件</strong>の追加入院見込み。</>}
+            </div>
+          </div>
 
-      {/* Section 3: Qualitative */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center text-violet-600 text-sm font-bold">3</span>定性分析
-        </h3>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Section 3: Qualitative */}
           <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500"></span>当院が選ばれる理由</h4>
-            <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={selectionChartData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 10 }} />
-                  <Tooltip /><Bar dataKey="件数" fill="#10b981" radius={[0, 4, 4, 0]} barSize={18} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <PointBox type="success" isAI={!!aiInsights?.ai?.selectionComment}>
-              {aiInsights?.ai?.selectionComment || (notesAnalysis.selectionReasons[0] && (<><strong>「{notesAnalysis.selectionReasons[0].label}」が{notesAnalysis.selectionReasons[0].count}件で最多</strong>。</>))}
-            </PointBox>
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500"></span>キャンセル・流出の真因</h4>
-            <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={cancelChartData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 10 }} />
-                  <Tooltip /><Bar dataKey="件数" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={18} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <PointBox type="danger" isAI={!!aiInsights?.ai?.cancelComment}>
-              {aiInsights?.ai?.cancelComment || <>改善可能なキャンセルは<strong>{notesAnalysis.improvableCancels.total}件</strong>。営業施策で転換可能です。</>}
-            </PointBox>
-          </div>
-        </div>
-        {notesAnalysis.competitors.length > 0 && (
-          <div className="mt-6">
-            <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span>競合流出先</h4>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {notesAnalysis.competitors.slice(0, 8).map((c) => (
-                <span key={c.name} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 border border-orange-200 rounded-full text-sm">
-                  <span className="font-medium text-orange-800">{c.name}</span>
-                  <span className="text-xs text-orange-500 font-bold">{c.count}回</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Section 4: Golden Paths */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-cyan-100 flex items-center justify-center text-cyan-600 text-sm font-bold">4</span>クロス分析 — 黄金パターンとリスクパターン
-        </h3>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2"><span className="text-base">🏆</span>ゴールデンパス</h4>
-            <div className="space-y-2">
-              {crossAnalysis.goldenPaths.slice(0, 5).map((path, i) => (
-                <div key={i} className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-green-600 text-white flex items-center justify-center text-[10px] font-bold">{i + 1}</span>
-                      <span className="text-sm font-bold text-green-800">{path.path}</span>
-                    </div>
-                    <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">CVR {path.cvr}%</span>
-                  </div>
-                  <div className="flex items-center gap-2 ml-7 text-[11px] text-green-600">
-                    <span>{path.count}件</span><span className="text-green-400">|</span><span>全体比 {Math.round(path.cvr / overallCVR * 10) / 10}倍</span>
-                  </div>
+            <SectionDivider num="03" title="定性分析" accent="bg-violet-600" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-5">
+              <div>
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">当院が選ばれる理由</h4>
+                <div className="h-[200px] bg-gray-50 rounded-lg p-3">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={selectionChartData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: "#9ca3af" }} />
+                      <YAxis dataKey="name" type="category" width={85} tick={{ fontSize: 10, fill: "#6b7280" }} />
+                      <Tooltip /><Bar dataKey="件数" fill="#059669" radius={[0, 4, 4, 0]} barSize={16} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2"><span className="text-base">⚠️</span>リスクパターン</h4>
-            <div className="space-y-2">
-              {crossAnalysis.riskPatterns.slice(0, 5).map((path, i) => (
-                <div key={i} className="bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold">{i + 1}</span>
-                      <span className="text-sm font-bold text-red-800">{path.pattern}</span>
-                    </div>
-                    <span className="text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">CVR {path.cvr}%</span>
-                  </div>
-                  <div className="flex items-center gap-2 ml-7 text-[11px] text-red-500">
-                    <span>{path.count}件</span><span className="text-red-300">|</span><span>全体比 {Math.round(path.cvr / overallCVR * 10) / 10}倍</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Section 5: Geographic */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center text-purple-600 text-sm font-bold">5</span>地域分析
-        </h3>
-        <div className="h-[250px] mb-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={areaChartData}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={45} />
-              <YAxis tick={{ fontSize: 11 }} /><Tooltip />
-              <Bar dataKey="件数" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={36} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        <PointBox type="info" isAI={!!aiInsights?.ai?.areaComment}>
-          {aiInsights?.ai?.areaComment || <>上位3地域（<strong>{topAreas.slice(0, 3).map(a => a.address).join("、")}</strong>）で入院患者の約{topAreas.length > 0 ? Math.round(topAreas.slice(0, 3).reduce((s, a) => s + a.count, 0) / totalAdmitted * 100) : 0}%を占めます。</>}
-        </PointBox>
-      </div>
-
-      {/* Section 6: Next Actions */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600 text-sm font-bold">6</span>ネクストアクション
-          {aiInsights?.nextActions && <span className="bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full ml-2">AI生成</span>}
-        </h3>
-        <div className="space-y-3">
-          {(aiInsights?.nextActions || [
-            { title: "高CVR紹介元への関係強化", desc: `${highCVRSources.slice(0, 3).map(s => s.source).join("、")}は高CVRを維持。定期訪問・勉強会を月1回開催。`, impact: "大", effort: "小", priority: "最優先" },
-            { title: "口コミ・HP経由チャネル強化", desc: "退院時アンケート→Google口コミ誘導、食事風景のSNS投稿強化を実施。", impact: "大", effort: "中", priority: "最優先" },
-            { title: `競合対策: ${notesAnalysis.competitors[0]?.name || "主要競合"}への流出防止`, desc: "当院の強み（療養ケア品質・食事・面会時間の柔軟性）を初期対応時に明確に訴求。", impact: "大", effort: "中", priority: "高" },
-            { title: "費用面キャンセルの早期解消", desc: "面談前に費用シミュレーションシートを事前送付し、不安を早期解消。", impact: "中", effort: "小", priority: "高" },
-            { title: "リードタイム短縮", desc: `現在の平均${leadTime.avg}日→目標${Math.max(leadTime.avg - 5, 10)}日。初期対応を48時間以内に。`, impact: "中", effort: "中", priority: "高" },
-            { title: "重点エリア営業の集中展開", desc: `${topAreas.slice(0, 3).map(a => a.address).join("、")}の包括・居宅への営業を強化。`, impact: "中", effort: "中", priority: "中" },
-          ]).map((action) => {
-            const pColor = action.priority === "最優先" ? "bg-red-600" : action.priority === "高" ? "bg-orange-500" : "bg-blue-500";
-            const bgColor = action.priority === "最優先" ? "bg-red-50 border-red-200" : action.priority === "高" ? "bg-orange-50 border-orange-200" : "bg-blue-50 border-blue-200";
-            return (
-            <div key={action.title} className={`border rounded-lg p-4 ${bgColor}`}>
-              <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <span className={`${pColor} text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full`}>{action.priority}</span>
-                <h4 className="font-bold text-sm text-gray-800">{action.title}</h4>
-                <div className="ml-auto flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded border border-gray-200">効果: {action.impact}</span>
-                  <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded border border-gray-200">工数: {action.effort}</span>
+                <div className="mt-3 p-3 bg-emerald-50 border-l-3 border-emerald-500 rounded-r-lg text-sm text-gray-700">
+                  {aiInsights?.ai?.selectionComment || (notesAnalysis.selectionReasons[0] && <>「{notesAnalysis.selectionReasons[0].label}」が{notesAnalysis.selectionReasons[0].count}件で最多。</>)}
                 </div>
               </div>
-              <p className="text-sm text-gray-700">{action.desc}</p>
+              <div>
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">キャンセル・流出要因</h4>
+                <div className="h-[200px] bg-gray-50 rounded-lg p-3">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={cancelChartData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: "#9ca3af" }} />
+                      <YAxis dataKey="name" type="category" width={85} tick={{ fontSize: 10, fill: "#6b7280" }} />
+                      <Tooltip /><Bar dataKey="件数" fill="#dc2626" radius={[0, 4, 4, 0]} barSize={16} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-3 p-3 bg-red-50 border-l-3 border-red-500 rounded-r-lg text-sm text-gray-700">
+                  {aiInsights?.ai?.cancelComment || <>改善可能なキャンセルは<strong>{notesAnalysis.improvableCancels.total}件</strong>。営業施策で転換可能。</>}
+                </div>
+              </div>
             </div>
-            );
-          })}
-        </div>
-      </div>
-
-      </div>
-      {/* end reportRef */}
-
-      {/* AI Deep Analysis */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white text-sm">AI</span>
-            AI深掘り分析
-          </h3>
-          <div className="flex items-center gap-3">
-            {aiUsage && (
-              <div className="text-[11px] text-gray-400 flex items-center gap-2">
-                <span>入力: {aiUsage.input_tokens.toLocaleString()}tok</span>
-                <span>出力: {aiUsage.output_tokens.toLocaleString()}tok</span>
-                {aiUsage.cache_read_input_tokens > 0 && (
-                  <span className="text-green-500 font-medium">cache hit</span>
-                )}
+            {notesAnalysis.competitors.length > 0 && (
+              <div className="mt-5">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">競合流出先</h4>
+                <div className="flex flex-wrap gap-2">
+                  {notesAnalysis.competitors.slice(0, 8).map((c) => (
+                    <span key={c.name} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm">
+                      <span className="font-medium text-gray-800">{c.name}</span>
+                      <span className="text-xs text-gray-400 font-bold">{c.count}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
-            <button
-              onClick={handleGenerateAI}
-              disabled={aiStatus === "loading"}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm ${
-                aiStatus === "loading"
-                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:from-violet-700 hover:to-purple-700 hover:shadow-md active:scale-[0.98]"
-              }`}
-            >
-              {aiStatus === "loading" ? (
-                <><span className="animate-spin w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full"></span>分析中...</>
-              ) : (
-                <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>{aiStatus === "done" ? "再分析" : "AI分析を実行"}</>
-              )}
+          </div>
+
+          {/* Section 4: Cross Analysis */}
+          <div>
+            <SectionDivider num="04" title="クロス分析 — 成功パターンとリスク" accent="bg-cyan-600" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-5">
+              <div>
+                <h4 className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-3">Golden Path（高CVR経路）</h4>
+                <div className="space-y-2">
+                  {crossAnalysis.goldenPaths.slice(0, 5).map((path, i) => (
+                    <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3 border border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">{i + 1}</span>
+                        <span className="text-sm font-medium text-gray-800">{path.path}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-gray-400">{path.count}件</span>
+                        <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">{path.cvr}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-red-600 uppercase tracking-wider mb-3">Risk Pattern（低CVR経路）</h4>
+                <div className="space-y-2">
+                  {crossAnalysis.riskPatterns.slice(0, 5).map((path, i) => (
+                    <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3 border border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold">{i + 1}</span>
+                        <span className="text-sm font-medium text-gray-800">{path.pattern}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-gray-400">{path.count}件</span>
+                        <span className="font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded">{path.cvr}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Geographic */}
+          <div>
+            <SectionDivider num="05" title="地域分析" accent="bg-purple-600" />
+            <div className="h-[240px] bg-gray-50 rounded-lg p-3 mt-5 mb-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={areaChartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#6b7280" }} interval={0} angle={-15} textAnchor="end" height={40} />
+                  <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} /><Tooltip />
+                  <Bar dataKey="件数" fill="#7c3aed" radius={[4, 4, 0, 0]} barSize={32} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="p-3 bg-purple-50 border-l-3 border-purple-500 rounded-r-lg text-sm text-gray-700">
+              {aiInsights?.ai?.areaComment || <>上位3地域（{topAreas.slice(0, 3).map(a => a.address).join("、")}）で入院の約{topAreas.length > 0 ? Math.round(topAreas.slice(0, 3).reduce((s, a) => s + a.count, 0) / totalAdmitted * 100) : 0}%を占有。</>}
+            </div>
+          </div>
+
+          {/* Section 6: Next Actions */}
+          <div>
+            <SectionDivider num="06" title="ネクストアクション" accent="bg-gray-900" />
+            {aiInsights?.nextActions && <span className="inline-block bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full mt-2 mb-3">AI Generated</span>}
+            <div className="mt-4 overflow-hidden rounded-lg border border-gray-200">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-900 text-white">
+                  <th className="py-3 px-4 text-left text-xs font-medium uppercase tracking-wider">Priority</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium uppercase tracking-wider">施策</th>
+                  <th className="py-3 px-4 text-center text-xs font-medium uppercase tracking-wider">効果</th>
+                  <th className="py-3 px-4 text-center text-xs font-medium uppercase tracking-wider">工数</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-100">
+                  {(aiInsights?.nextActions || [
+                    { title: "高CVR紹介元への関係強化", desc: `${highCVRSources.slice(0, 3).map(s => s.source).join("、")}へ定期訪問・勉強会を月1回開催`, impact: "大", effort: "小", priority: "最優先" },
+                    { title: "口コミ・HP経由チャネル強化", desc: "退院時アンケート→Google口コミ誘導、SNS投稿強化", impact: "大", effort: "中", priority: "最優先" },
+                    { title: `競合対策（${notesAnalysis.competitors[0]?.name || "主要競合"}）`, desc: "当院の強みを初期対応時に明確訴求", impact: "大", effort: "中", priority: "高" },
+                    { title: "費用面キャンセルの早期解消", desc: "面談前に費用シミュレーションシートを事前送付", impact: "中", effort: "小", priority: "高" },
+                    { title: "リードタイム短縮", desc: `平均${leadTime.avg}日→${Math.max(leadTime.avg - 5, 10)}日目標。初期対応48h以内`, impact: "中", effort: "中", priority: "高" },
+                    { title: "重点エリア営業", desc: `${topAreas.slice(0, 3).map(a => a.address).join("、")}の包括・居宅へ集中展開`, impact: "中", effort: "中", priority: "中" },
+                  ]).map((action) => {
+                    const pStyle = action.priority === "最優先" ? "bg-red-100 text-red-800" : action.priority === "高" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800";
+                    return (
+                      <tr key={action.title} className="hover:bg-gray-50">
+                        <td className="py-3 px-4"><span className={`text-[10px] font-bold px-2 py-1 rounded ${pStyle}`}>{action.priority}</span></td>
+                        <td className="py-3 px-4">
+                          <p className="font-bold text-gray-900 text-sm">{action.title}</p>
+                          <p className="text-gray-500 text-xs mt-0.5">{action.desc}</p>
+                        </td>
+                        <td className="py-3 px-4 text-center font-medium text-gray-700">{action.impact}</td>
+                        <td className="py-3 px-4 text-center font-medium text-gray-700">{action.effort}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-8 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-[10px] text-gray-400">
+          <span>Powered by Claude AI | Theras Healthcare Analytics</span>
+          <span>{dataMonth.year}年{dataMonth.month}月 月次レポート | Confidential</span>
+        </div>
+      </div>
+
+      {/* AI Deep Analysis */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-purple-700 flex items-center justify-center text-white text-xs font-bold">AI</div>
+            <div>
+              <h3 className="text-sm font-bold text-gray-900">AI深掘り分析</h3>
+              <p className="text-[11px] text-gray-400">Claude Opus 4.8 による経営分析ナラティブ</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            {aiUsage && (
+              <div className="text-[10px] text-gray-400 flex items-center gap-2">
+                <span>{aiUsage.input_tokens.toLocaleString()} in</span>
+                <span>{aiUsage.output_tokens.toLocaleString()} out</span>
+                {aiUsage.cache_read_input_tokens > 0 && <span className="text-emerald-500">cached</span>}
+              </div>
+            )}
+            <button onClick={handleGenerateAI} disabled={aiStatus === "loading"}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition ${aiStatus === "loading" ? "bg-gray-100 text-gray-400" : "bg-violet-600 text-white hover:bg-violet-700"}`}>
+              {aiStatus === "loading" ? <><span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-violet-300 border-t-transparent rounded-full mr-2" />分析中...</> : aiStatus === "done" ? "再分析" : "分析を実行"}
             </button>
           </div>
         </div>
 
-        {aiStatus === "idle" && (
-          <div className="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-lg p-6 text-center">
-            <p className="text-violet-700 text-sm font-medium mb-1">Claude Opus 4.8 による高度な経営分析</p>
-            <p className="text-violet-500 text-xs">上のボタンを押すと、{dataMonth.year}年{dataMonth.label}のデータをAIが分析し、インサイトとアクションプランを生成します。</p>
-          </div>
-        )}
+        <div className="p-6">
+          {aiStatus === "idle" && (
+            <div className="text-center py-12 text-gray-400">
+              <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+              <p className="text-sm">上のボタンを押すと、AIが経営分析ナラティブを生成します</p>
+            </div>
+          )}
 
-        {(aiStatus === "loading" || aiStatus === "done" || aiStatus === "error") && aiResponse && (
-          <div ref={aiResponseRef} className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-p:text-gray-700 prose-li:text-gray-700 prose-strong:text-gray-900 bg-gray-50 rounded-lg p-6 border border-gray-200 whitespace-pre-wrap">
-            {aiResponse}
-            {aiStatus === "loading" && <span className="inline-block w-2 h-4 bg-violet-500 animate-pulse ml-0.5 align-text-bottom"></span>}
-          </div>
-        )}
+          {(aiStatus === "loading" || aiStatus === "done" || aiStatus === "error") && aiResponse && (
+            <div ref={aiResponseRef} className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-headings:font-bold prose-h3:text-base prose-h3:mt-6 prose-h3:mb-3 prose-p:text-gray-700 prose-p:leading-relaxed prose-li:text-gray-700 prose-strong:text-gray-900 prose-ul:my-2 prose-ol:my-2">
+              <ReactMarkdown>{aiResponse}</ReactMarkdown>
+              {aiStatus === "loading" && <span className="inline-block w-2 h-5 bg-violet-500 animate-pulse ml-0.5 align-text-bottom" />}
+            </div>
+          )}
 
-        {aiStatus === "error" && (
-          <p className="text-xs text-red-500 mt-2">APIキーが設定されていない場合は、.env.localにANTHROPIC_API_KEYを設定してください。</p>
-        )}
+          {aiStatus === "error" && (
+            <p className="text-xs text-red-500 mt-3">APIキーが設定されていない場合は、.env.localにANTHROPIC_API_KEYを設定してください。</p>
+          )}
+        </div>
       </div>
     </div>
   );
