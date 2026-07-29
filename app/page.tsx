@@ -9,7 +9,8 @@ import {
 } from "recharts";
 import type { HospitalRecord } from "@/lib/types";
 import {
-  getDataMonth, getAvailableMonths, filterRecordsByMonth,
+  getDataMonth, getAvailableMonths, filterRecordsByPeriod,
+  monthPeriod, rangePeriod, shiftPeriodYears, type Period,
   getMonthlyAdmissions, getSourceCVData, getStatusDistribution,
   getReferralRouteData, getMonthlyContacts, getFunnelData,
   getLeadTimeStats, getCancelReasonData, getKPAddressData,
@@ -19,6 +20,9 @@ import { runCrossAnalysis, type CrossAnalysisResult, type CrossTable } from "@/l
 import { analyzeNotes, type NotesAnalysisResult } from "@/lib/notes-analysis";
 import { geocodeAddresses } from "@/lib/geocode";
 import { buildMeetingReportWorkbook, parseCensusSheet, type DailyCensus } from "@/lib/report-export";
+import {
+  trimCensus, dailyCensus, monthlyCensusTrend, censusPeriodSummary, censusMonthSummary, BED_COUNT,
+} from "@/lib/census-analysis";
 
 const HospitalMap = dynamic(() => import("@/components/HospitalMap"), {
   ssr: false,
@@ -31,6 +35,7 @@ const HospitalMap = dynamic(() => import("@/components/HospitalMap"), {
 
 const TABS = [
   { id: "overview", label: "概要", icon: "📊" },
+  { id: "census", label: "入退院・病床稼働", icon: "🛏️" },
   { id: "cv", label: "CV分析", icon: "🎯" },
   { id: "contacts", label: "接触分析", icon: "📞" },
   { id: "notes", label: "特記事項", icon: "📝" },
@@ -38,6 +43,42 @@ const TABS = [
   { id: "map", label: "地域マップ", icon: "🗺️" },
   { id: "ai", label: "AI分析", icon: "🤖" },
 ] as const;
+
+const isoOf = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** 期間指定のクイック選択。基準は「表示期間」で選ばれている月 */
+const PRESET_RANGES: { label: string; build: (monthKey: string | null) => { from: string; to: string } }[] = [
+  {
+    label: "21日〆（報告期間）",
+    build: (key) => {
+      const [y, m] = (key || isoOf(new Date()).slice(0, 7)).split("-").map(Number);
+      return { from: isoOf(new Date(y, m - 2, 21)), to: isoOf(new Date(y, m - 1, 20)) };
+    },
+  },
+  {
+    label: "選択中の月",
+    build: (key) => {
+      const [y, m] = (key || isoOf(new Date()).slice(0, 7)).split("-").map(Number);
+      return { from: isoOf(new Date(y, m - 1, 1)), to: isoOf(new Date(y, m, 0)) };
+    },
+  },
+  {
+    label: "直近3ヶ月",
+    build: (key) => {
+      const [y, m] = (key || isoOf(new Date()).slice(0, 7)).split("-").map(Number);
+      return { from: isoOf(new Date(y, m - 3, 1)), to: isoOf(new Date(y, m, 0)) };
+    },
+  },
+  {
+    label: "年度（4月〜）",
+    build: (key) => {
+      const [y, m] = (key || isoOf(new Date()).slice(0, 7)).split("-").map(Number);
+      const fy = m >= 4 ? y : y - 1;
+      return { from: isoOf(new Date(fy, 3, 1)), to: isoOf(new Date(y, m, 0)) };
+    },
+  },
+];
 
 const COLORS = [
   "#1e40af", "#059669", "#d97706", "#dc2626", "#8b5cf6",
@@ -172,6 +213,9 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
+  const [periodMode, setPeriodMode] = useState<"month" | "range">("month");
+  const [rangeFrom, setRangeFrom] = useState<string>("");
+  const [rangeTo, setRangeTo] = useState<string>("");
   const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
   const [aiGlobalStatus, setAiGlobalStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
 
@@ -222,45 +266,64 @@ export default function Home() {
     }
   }, [records, selectedMonthKey]);
 
-  const selectedMonth = useMemo(() => {
+  // 期間指定モードの初期値は、選択中の月の初日〜末日
+  useEffect(() => {
+    if (periodMode !== "range" || rangeFrom || !selectedMonthKey) return;
+    const [y, m] = selectedMonthKey.split("-").map(Number);
+    const p = monthPeriod(y, m);
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    setRangeFrom(iso(p.from));
+    setRangeTo(iso(p.to));
+  }, [periodMode, rangeFrom, selectedMonthKey]);
+
+  const period = useMemo<Period | null>(() => {
+    if (periodMode === "range") {
+      if (!rangeFrom || !rangeTo || rangeFrom > rangeTo) return null;
+      return rangePeriod(rangeFrom, rangeTo);
+    }
     if (!selectedMonthKey) return null;
     const [y, m] = selectedMonthKey.split("-").map(Number);
-    return { year: y, month: m, label: `${m}月` };
-  }, [selectedMonthKey]);
+    return monthPeriod(y, m);
+  }, [periodMode, rangeFrom, rangeTo, selectedMonthKey]);
 
   const filteredRecords = useMemo(() => {
-    if (!selectedMonth || records.length === 0) return records;
-    return filterRecordsByMonth(records, selectedMonth);
-  }, [records, selectedMonth]);
+    if (!period || records.length === 0) return records;
+    return filterRecordsByPeriod(records, period);
+  }, [records, period]);
 
   const prevYearRecords = useMemo(() => {
-    if (!selectedMonth || records.length === 0) return [];
-    return filterRecordsByMonth(records, { year: selectedMonth.year - 1, month: selectedMonth.month });
-  }, [records, selectedMonth]);
+    if (!period || records.length === 0) return [];
+    return filterRecordsByPeriod(records, shiftPeriodYears(period, -1));
+  }, [records, period]);
 
   const analysisData = useMemo(() => {
     if (filteredRecords.length === 0) return null;
-    const dm = selectedMonth || getDataMonth(filteredRecords);
+    const fallback = getDataMonth(filteredRecords);
+    const p = period ?? monthPeriod(fallback.year, fallback.month);
+    // 見出しやExcel/PDF出力の対象月として使う。label は期間指定時に「6/21〜7/20」になる
+    const dm = { year: p.year, month: p.month, label: p.short };
     return {
+      period: p,
       dataMonth: dm,
-      monthlyAdmissions: getMonthlyAdmissions(filteredRecords, dm),
+      monthlyAdmissions: getMonthlyAdmissions(filteredRecords, p),
       sourceCVData: getSourceCVData(filteredRecords),
       statusDist: getStatusDistribution(filteredRecords),
       routeData: getReferralRouteData(filteredRecords),
-      monthlyContacts: getMonthlyContacts(filteredRecords, dm),
+      monthlyContacts: getMonthlyContacts(filteredRecords, p),
       funnelData: getFunnelData(filteredRecords),
       leadTime: getLeadTimeStats(filteredRecords),
       cancelReasons: getCancelReasonData(filteredRecords),
       kpAddressData: getKPAddressData(filteredRecords),
       preAdmissionLoc: getPreAdmissionLocationData(filteredRecords),
-      sourceMonthlyTrend: getSourceMonthlyTrend(filteredRecords, 15, dm),
+      sourceMonthlyTrend: getSourceMonthlyTrend(filteredRecords, 15, p),
       notesAnalysis: analyzeNotes(filteredRecords),
       crossAnalysis: runCrossAnalysis(filteredRecords),
       totalRecords: filteredRecords.length,
       totalAdmitted: filteredRecords.filter((r) => r.status === "入院").length,
       overallCVR: Math.round((filteredRecords.filter((r) => r.status === "入院").length / filteredRecords.length) * 100),
     };
-  }, [filteredRecords, selectedMonth]);
+  }, [filteredRecords, period]);
 
   const prevYearData = useMemo(() => {
     if (prevYearRecords.length === 0) return null;
@@ -421,17 +484,75 @@ export default function Home() {
             {availableMonths.length > 0 && (
               <div className="px-3 pt-4 mt-2 border-t border-gray-200">
                 <label className="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">表示期間</label>
-                <select
-                  value={selectedMonthKey || ""}
-                  onChange={(e) => setSelectedMonthKey(e.target.value)}
-                  className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-700 font-medium cursor-pointer"
-                >
-                  {availableMonths.map((m) => (
-                    <option key={`${m.year}-${String(m.month).padStart(2, "0")}`} value={`${m.year}-${String(m.month).padStart(2, "0")}`}>
-                      {m.year}年{m.label}（{m.count}件）
-                    </option>
+
+                {/* 月次 / 期間指定 の切替 */}
+                <div className="flex bg-gray-100 rounded-lg p-0.5 mb-2">
+                  {([
+                    { id: "month", label: "月次" },
+                    { id: "range", label: "期間指定" },
+                  ] as const).map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setPeriodMode(m.id)}
+                      className={`flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition ${
+                        periodMode === m.id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                      }`}
+                    >
+                      {m.label}
+                    </button>
                   ))}
-                </select>
+                </div>
+
+                {periodMode === "month" ? (
+                  <select
+                    value={selectedMonthKey || ""}
+                    onChange={(e) => setSelectedMonthKey(e.target.value)}
+                    className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-700 font-medium cursor-pointer"
+                  >
+                    {availableMonths.map((m) => (
+                      <option key={`${m.year}-${String(m.month).padStart(2, "0")}`} value={`${m.year}-${String(m.month).padStart(2, "0")}`}>
+                        {m.year}年{m.label}（{m.count}件）
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1">開始日</label>
+                      <input type="date" value={rangeFrom} max={rangeTo || undefined}
+                        onChange={(e) => setRangeFrom(e.target.value)}
+                        className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-700" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1">終了日</label>
+                      <input type="date" value={rangeTo} min={rangeFrom || undefined}
+                        onChange={(e) => setRangeTo(e.target.value)}
+                        className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-700" />
+                    </div>
+                    {rangeFrom && rangeTo && rangeFrom > rangeTo && (
+                      <p className="text-[11px] text-red-500">開始日が終了日より後になっています</p>
+                    )}
+                    {period && (
+                      <p className="text-[11px] text-gray-500">
+                        {period.title}（{Math.round((period.to.getTime() - period.from.getTime()) / 86400000) + 1}日間）
+                        <span className="block text-gray-400">対象 {filteredRecords.length}件</span>
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {PRESET_RANGES.map((preset) => (
+                        <button key={preset.label}
+                          onClick={() => {
+                            const { from, to } = preset.build(selectedMonthKey);
+                            setRangeFrom(from);
+                            setRangeTo(to);
+                          }}
+                          className="px-2 py-1 text-[11px] rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50">
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </aside>
@@ -442,8 +563,12 @@ export default function Home() {
           {!analysisData && (
             <div className="flex items-center justify-center h-64">
               <div className="text-center space-y-2">
-                <p className="text-gray-400 text-lg">選択された月のデータがありません</p>
-                <p className="text-gray-400 text-sm">別の月を選択してください</p>
+                <p className="text-gray-400 text-lg">
+                  {periodMode === "range" ? "指定された期間のデータがありません" : "選択された月のデータがありません"}
+                </p>
+                <p className="text-gray-400 text-sm">
+                  {periodMode === "range" ? "開始日・終了日を調整してください" : "別の月を選択してください"}
+                </p>
               </div>
             </div>
           )}
@@ -483,13 +608,16 @@ export default function Home() {
               aiStatus={aiGlobalStatus}
             />
           )}
+          {analysisData && activeTab === "census" && (
+            <CensusTab census={census} dataMonth={analysisData.dataMonth} period={analysisData.period} aiStatus={aiGlobalStatus} />
+          )}
           {analysisData && activeTab === "notes" && <NotesTab notesAnalysis={analysisData.notesAnalysis} aiInsights={aiInsights?.notes} aiStatus={aiGlobalStatus} />}
           {analysisData && activeTab === "cross" && <CrossAnalysisTab crossAnalysis={analysisData.crossAnalysis} aiInsights={aiInsights?.cross} aiStatus={aiGlobalStatus} />}
           {analysisData && activeTab === "map" && <MapTab kpAddressData={analysisData.kpAddressData} totalAdmitted={analysisData.totalAdmitted} aiInsights={aiInsights?.map} aiStatus={aiGlobalStatus} />}
           {analysisData && activeTab === "ai" && (
             <AITab
               dataMonth={analysisData.dataMonth}
-              records={filteredRecords} allRecords={records} census={census}
+              records={filteredRecords} allRecords={records} census={census} period={analysisData.period}
               sourceCVData={analysisData.sourceCVData}
               monthlyAdmissions={analysisData.monthlyAdmissions} leadTime={analysisData.leadTime}
               cancelReasons={analysisData.cancelReasons} overallCVR={analysisData.overallCVR}
@@ -537,6 +665,197 @@ function StatCard({ label, value, sub, color, prevValue, unit, isLowerBetter }: 
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-lg font-bold text-gray-800 mb-4">{children}</h2>;
+}
+
+// ==================== 入退院・病床稼働 Tab ====================
+function CensusTab({
+  census, dataMonth, period: viewPeriod, aiStatus,
+}: {
+  census: DailyCensus[];
+  dataMonth: ReturnType<typeof getDataMonth>;
+  period: Period;
+  aiStatus: "idle" | "loading" | "done" | "error";
+}) {
+  const data = useMemo(() => trimCensus(census), [census]);
+  const daily = useMemo(() => dailyCensus(data, viewPeriod), [data, viewPeriod]);
+  const trend = useMemo(() => monthlyCensusTrend(data, 15), [data]);
+  // 【1】【2】の期間サマリーは報告書の定義（前月21日〜当月20日）に固定する
+  const period = useMemo(() => censusPeriodSummary(data, dataMonth), [data, dataMonth]);
+  const month = useMemo(() => censusMonthSummary(data, viewPeriod), [data, viewPeriod]);
+  const prevYear = useMemo(
+    () => censusMonthSummary(data, shiftPeriodYears(viewPeriod, -1)),
+    [data, viewPeriod],
+  );
+
+  if (data.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
+        <p className="text-gray-500">入退院データがありません。</p>
+        <p className="text-sm text-gray-400 mt-2">
+          「Excelインポート」から、<span className="font-medium">入退院数情報</span>シートを含むファイルを読み込んでください。
+        </p>
+      </div>
+    );
+  }
+
+  if (!month) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
+        <p className="text-gray-500">{viewPeriod.title}の入退院実績はまだ入力されていません。</p>
+        <p className="text-sm text-gray-400 mt-2">
+          実績のある期間: {data[0].date} 〜 {data[data.length - 1].date}
+        </p>
+      </div>
+    );
+  }
+
+  const netColor = month.net > 0 ? "text-emerald-600" : month.net < 0 ? "text-red-500" : "text-gray-900";
+  const jp = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard label="入院数" value={month.admissions} sub={viewPeriod.isMonth ? `${dataMonth.year}年${dataMonth.label}` : viewPeriod.title}
+          color="text-blue-700" prevValue={prevYear?.admissions} unit="件" />
+        <StatCard label="退院数" value={month.discharges} color="text-orange-600"
+          prevValue={prevYear?.discharges} unit="件" />
+        {/* 純増減は正負をまたぐため前年比（％）は表示しない */}
+        <StatCard label="純増減" value={`${month.net > 0 ? "+" : ""}${month.net}`}
+          sub={prevYear ? `${viewPeriod.isMonth ? "前年同月" : "前年同期"} ${prevYear.net > 0 ? "+" : ""}${prevYear.net}件` : "入院 − 退院"}
+          color={netColor} />
+        <StatCard label="病床稼働率" value={`${month.occupancy}%`} sub={`平均在院 ${month.censusAverage}人 / ${BED_COUNT}床`}
+          color="text-indigo-600" prevValue={prevYear?.occupancy} unit="%" />
+      </div>
+
+      {/* 経営会議報告と同じ 21日締めのサマリー */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+        <div className="flex items-baseline justify-between mb-4">
+          <SectionTitle>経営会議報告 期間サマリー</SectionTitle>
+          <span className="text-xs text-gray-400">{jp(period.from)} 〜 {jp(period.to)}（前月21日〜当月20日締め）</span>
+        </div>
+        {period.hasData ? (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              { l: "入院", v: `${period.admissions}件` },
+              { l: "退院", v: `${period.discharges}件` },
+              { l: "純増減", v: `${period.net > 0 ? "+" : ""}${period.net}件` },
+              { l: "20日時点 在院者数", v: period.censusOn20th != null ? `${period.censusOn20th}人` : "—" },
+              { l: "期間平均 在院者数", v: period.censusAverage != null ? `${period.censusAverage}人` : "—" },
+            ].map((k) => (
+              <div key={k.l} className="bg-gray-50 rounded-lg p-3 text-center">
+                <p className="text-[11px] text-gray-500 mb-1">{k.l}</p>
+                <p className="text-xl font-bold text-gray-900">{k.v}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">この期間の実績データがありません。</p>
+        )}
+        <p className="text-xs text-gray-400 mt-3">
+          この数値が「経営会議報告資料をExcel出力」の【1】【2】に出力されます。
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+        <SectionTitle>{viewPeriod.short} 日別 入退院と在院者数</SectionTitle>
+        <ResponsiveContainer width="100%" height={340}>
+          <ComposedChart data={daily}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0}
+              label={{ value: "日", position: "insideBottomRight", offset: -5, fontSize: 11 }} />
+            <YAxis yAxisId="left" tick={{ fontSize: 12 }} allowDecimals={false} label={{ value: "件", angle: -90, position: "insideLeft", fontSize: 11 }} />
+            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} domain={["dataMin - 5", "dataMax + 5"]}
+              label={{ value: "在院者数", angle: 90, position: "insideRight", fontSize: 11 }} />
+            <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e7eb" }}
+              formatter={(v, n) => [n === "在院者数" ? `${v}人` : `${v}件`, n]} labelFormatter={(l) => (viewPeriod.isMonth ? `${dataMonth.month}/${l}` : String(l))} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar yAxisId="left" dataKey="入院" fill="#1e40af" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+            <Bar yAxisId="left" dataKey="退院" fill="#f97316" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+            <Line yAxisId="right" type="monotone" dataKey="在院者数" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+        {aiStatus && <AIPlaceholder status={aiStatus} />}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+          <SectionTitle>月次 入退院バランス</SectionTitle>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={trend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} />
+              <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
+              <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e7eb" }} formatter={(v, n) => [`${v}件`, n]} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="入院" fill="#1e40af" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="退院" fill="#f97316" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Line type="monotone" dataKey="純増減" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <PointBox type="info">
+            直近{trend.length}ヶ月の累計は入院{trend.reduce((s, t) => s + t.入院, 0)}件・退院{trend.reduce((s, t) => s + t.退院, 0)}件、
+            純増減は{trend.reduce((s, t) => s + t.純増減, 0) > 0 ? "+" : ""}{trend.reduce((s, t) => s + t.純増減, 0)}件です。
+          </PointBox>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+          <SectionTitle>在院者数と病床稼働率の推移</SectionTitle>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={trend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} />
+              <YAxis yAxisId="left" tick={{ fontSize: 12 }} domain={["dataMin - 10", "dataMax + 10"]} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} unit="%" domain={[70, 100]} />
+              <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e7eb" }}
+                formatter={(v, n) => [n === "稼働率" ? `${v}%` : `${v}人`, n]} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Area yAxisId="left" type="monotone" dataKey="在院者数" fill="#c7d2fe" stroke="#6366f1" strokeWidth={2} isAnimationActive={false} />
+              <Line yAxisId="right" type="monotone" dataKey="稼働率" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <PointBox type={trend[trend.length - 1].稼働率 >= 90 ? "warning" : "success"}>
+            直近の病床稼働率は<strong>{trend[trend.length - 1].稼働率}%</strong>（{BED_COUNT}床基準）。
+            {trend.length > 1 && `${trend[0].label}時点の${trend[0].稼働率}%から${(Math.round((trend[trend.length - 1].稼働率 - trend[0].稼働率) * 10) / 10)}ポイントの変化です。`}
+          </PointBox>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+        <SectionTitle>月次サマリー</SectionTitle>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 text-gray-500">
+                <th className="text-left py-2 px-3 font-medium">月</th>
+                <th className="text-right py-2 px-3 font-medium">入院</th>
+                <th className="text-right py-2 px-3 font-medium">退院</th>
+                <th className="text-right py-2 px-3 font-medium">純増減</th>
+                <th className="text-right py-2 px-3 font-medium">平均在院者数</th>
+                <th className="text-right py-2 px-3 font-medium">稼働率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...trend].reverse().map((t) => (
+                <tr key={t.key} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-2 px-3 text-gray-700">{`${t.key.slice(0, 4)}年${Number(t.key.slice(5, 7))}月`}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{t.入院}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{t.退院}</td>
+                  <td className={`py-2 px-3 text-right tabular-nums font-medium ${t.純増減 > 0 ? "text-emerald-600" : t.純増減 < 0 ? "text-red-500" : "text-gray-400"}`}>
+                    {t.純増減 > 0 ? "+" : ""}{t.純増減}
+                  </td>
+                  <td className="py-2 px-3 text-right tabular-nums">{t.在院者数}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{t.稼働率}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          出典: 入退院数情報シート（日次）。退院理由の内訳は入力データに含まれないため、退院は件数のみの集計です。
+        </p>
+      </div>
+    </div>
+  );
 }
 
 // ==================== Overview Tab ====================
@@ -673,7 +992,8 @@ function CVTab({
   aiStatus: "idle" | "loading" | "done" | "error";
 }) {
   const top20Sources = sourceCVData.slice(0, 20);
-  const { data: sourceMonthly, sources: allSources } = getSourceMonthlyTrend(records, 15, dataMonth);
+  // records は既に表示期間で絞り込み済みのため、ここでの期間指定は不要
+  const { data: sourceMonthly, sources: allSources } = getSourceMonthlyTrend(records, 15);
   const [selectedSources, setSelectedSources] = useState<Set<string>>(
     new Set(allSources.slice(0, 5))
   );
@@ -1382,7 +1702,7 @@ function PointBox({ type, children, isAI }: { type: "success" | "warning" | "dan
 }
 
 function AITab({
-  dataMonth, records, allRecords, census, sourceCVData, monthlyAdmissions, leadTime, cancelReasons,
+  dataMonth, records, allRecords, census, period: viewPeriod, sourceCVData, monthlyAdmissions, leadTime, cancelReasons,
   overallCVR, totalAdmitted, totalRecords, kpAddressData, notesAnalysis,
   crossAnalysis, funnelData, statusDist, prevYear, aiInsights,
 }: {
@@ -1390,6 +1710,7 @@ function AITab({
   records: HospitalRecord[];
   allRecords: HospitalRecord[];
   census: DailyCensus[];
+  period: Period;
   sourceCVData: ReturnType<typeof getSourceCVData>;
   monthlyAdmissions: ReturnType<typeof getMonthlyAdmissions>;
   leadTime: ReturnType<typeof getLeadTimeStats>;
@@ -1580,7 +1901,14 @@ function AITab({
       <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-5 py-3">
         <div className="flex items-center gap-3">
           <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-          <span className="text-sm text-gray-600">{dataMonth.year}年{dataMonth.label}分レポート</span>
+          <div className="text-sm text-gray-600">
+            <span>{viewPeriod.title} レポート</span>
+            {!viewPeriod.isMonth && (
+              <span className="block text-[11px] text-amber-600">
+                Excel出力は報告書の様式に合わせ、{dataMonth.year}年{dataMonth.month}月分（{dataMonth.month - 1 || 12}/21〜{dataMonth.month}/20締め）で作成されます
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {exportStatus !== "idle" && (

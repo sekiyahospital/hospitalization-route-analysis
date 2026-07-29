@@ -18,14 +18,80 @@ export function getAvailableMonths(records: HospitalRecord[]): { year: number; m
     });
 }
 
-export function filterRecordsByMonth(records: HospitalRecord[], target: { year: number; month: number }): HospitalRecord[] {
+/* ------------------------------------------------------------------ */
+/* 表示期間（月次 / 任意の日付範囲）                                    */
+/* ------------------------------------------------------------------ */
+
+export interface Period {
+  from: Date;
+  to: Date;
+  /** 月次表示かどうか */
+  isMonth: boolean;
+  /** 集計の起点となる月（Excel/PDF出力やAI分析の対象月） */
+  year: number;
+  month: number;
+  /** 「7月」「6/21〜7/20」 */
+  short: string;
+  /** 「2026年7月」「2026/6/21〜7/20」 */
+  title: string;
+}
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+export function monthPeriod(year: number, month: number): Period {
+  return {
+    from: new Date(year, month - 1, 1),
+    to: endOfDay(new Date(year, month, 0)),
+    isMonth: true,
+    year,
+    month,
+    short: `${month}月`,
+    title: `${year}年${month}月`,
+  };
+}
+
+/** ISO文字列（YYYY-MM-DD）の開始・終了から期間を作る */
+export function rangePeriod(fromISO: string, toISO: string): Period {
+  const [fy, fm, fd] = fromISO.split("-").map(Number);
+  const [ty, tm, td] = toISO.split("-").map(Number);
+  const from = new Date(fy, fm - 1, fd);
+  const to = endOfDay(new Date(ty, tm - 1, td));
+  const sameYear = fy === ty;
+  return {
+    from,
+    to,
+    isMonth: false,
+    // 対象月は終了日が属する月とする
+    year: ty,
+    month: tm,
+    short: `${fm}/${fd}〜${tm}/${td}`,
+    title: sameYear ? `${fy}/${fm}/${fd}〜${tm}/${td}` : `${fy}/${fm}/${fd}〜${ty}/${tm}/${td}`,
+  };
+}
+
+/** 期間を n 年ずらす（前年同期比に使う） */
+export function shiftPeriodYears(p: Period, delta: number): Period {
+  if (p.isMonth) return monthPeriod(p.year + delta, p.month);
+  const iso = (d: Date) =>
+    `${d.getFullYear() + delta}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return rangePeriod(iso(p.from), iso(p.to));
+}
+
+const inPeriod = (d: Date, p?: Period) => !p || (d >= p.from && d <= p.to);
+
+export function filterRecordsByPeriod(records: HospitalRecord[], p: Period): HospitalRecord[] {
   return records.filter((r) => {
     const d = r.admission_date || r.referral_inquiry_date || r.family_inquiry_date || r.visit_date;
     if (!d) return false;
     const parsed = new Date(d);
     if (isNaN(parsed.getTime())) return false;
-    return parsed.getFullYear() === target.year && parsed.getMonth() + 1 === target.month;
+    return inPeriod(startOfDay(parsed), p);
   });
+}
+
+export function filterRecordsByMonth(records: HospitalRecord[], target: { year: number; month: number }): HospitalRecord[] {
+  return filterRecordsByPeriod(records, monthPeriod(target.year, target.month));
 }
 
 export function getDataMonth(records: HospitalRecord[]): { year: number; month: number; label: string } {
@@ -47,14 +113,21 @@ export function getDataMonth(records: HospitalRecord[]): { year: number; month: 
   return { year: y, month: m, label: `${m}月` };
 }
 
-export function getDailyAdmissions(records: HospitalRecord[], targetMonth?: { year: number; month: number }): DailyAdmission[] {
+
+/** 期間が月をまたぐ場合は「M/D」、単月なら「D」で日ラベルを作る */
+const dayLabel = (key: string, period?: Period) => {
+  const [, m, d] = key.split("-");
+  return period && !period.isMonth ? `${parseInt(m)}/${parseInt(d)}` : `${parseInt(d)}`;
+};
+
+export function getDailyAdmissions(records: HospitalRecord[], period?: Period): DailyAdmission[] {
   const dayMap = new Map<string, number>();
 
   for (const r of records) {
     if (r.status === "入院" && r.admission_date) {
       const d = new Date(r.admission_date);
       if (isNaN(d.getTime()) || d.getFullYear() < 2025) continue;
-      if (targetMonth && (d.getFullYear() !== targetMonth.year || d.getMonth() + 1 !== targetMonth.month)) continue;
+      if (!inPeriod(startOfDay(d), period)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       dayMap.set(key, (dayMap.get(key) || 0) + 1);
     }
@@ -63,8 +136,7 @@ export function getDailyAdmissions(records: HospitalRecord[], targetMonth?: { ye
   return [...dayMap.keys()]
     .sort()
     .map((key) => {
-      const dd = parseInt(key.split("-")[2]);
-      return { date: key, label: `${dd}`, count: dayMap.get(key) || 0 };
+      return { date: key, label: dayLabel(key, period), count: dayMap.get(key) || 0 };
     });
 }
 
@@ -135,7 +207,7 @@ export function getReferralRouteData(records: HospitalRecord[]): { name: string;
     .sort((a, b) => b.value - a.value);
 }
 
-export function getDailyContacts(records: HospitalRecord[], targetMonth?: { year: number; month: number }): { date: string; label: string; contacts: number; admissions: number }[] {
+export function getDailyContacts(records: HospitalRecord[], period?: Period): { date: string; label: string; contacts: number; admissions: number }[] {
   const dayData = new Map<string, { contacts: number; admissions: number }>();
 
   for (const r of records) {
@@ -144,7 +216,7 @@ export function getDailyContacts(records: HospitalRecord[], targetMonth?: { year
     if (!firstContact) continue;
     const d = new Date(firstContact);
     if (isNaN(d.getTime()) || d.getFullYear() < 2025) continue;
-    if (targetMonth && (d.getFullYear() !== targetMonth.year || d.getMonth() + 1 !== targetMonth.month)) continue;
+    if (!inPeriod(startOfDay(d), period)) continue;
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     if (!dayData.has(key)) dayData.set(key, { contacts: 0, admissions: 0 });
     const entry = dayData.get(key)!;
@@ -154,14 +226,11 @@ export function getDailyContacts(records: HospitalRecord[], targetMonth?: { year
 
   return [...dayData.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, data]) => {
-      const [, m, dd] = key.split("-");
-      return {
-        date: key,
-        label: `${parseInt(dd)}`,
-        ...data,
-      };
-    });
+    .map(([key, data]) => ({
+      date: key,
+      label: dayLabel(key, period),
+      ...data,
+    }));
 }
 
 // backward compat alias
@@ -252,7 +321,7 @@ export type SourceMonthlyData = SourceDailyData;
 export function getSourceDailyTrend(
   records: HospitalRecord[],
   topN: number = 10,
-  targetMonth?: { year: number; month: number }
+  period?: Period
 ): { data: SourceDailyData[]; sources: string[] } {
   const sourceAdmissions = new Map<string, number>();
   for (const r of records) {
@@ -273,7 +342,7 @@ export function getSourceDailyTrend(
     if (!topSources.includes(src)) continue;
     const d = new Date(r.admission_date);
     if (isNaN(d.getTime()) || d.getFullYear() < 2025) continue;
-    if (targetMonth && (d.getFullYear() !== targetMonth.year || d.getMonth() + 1 !== targetMonth.month)) continue;
+    if (!inPeriod(startOfDay(d), period)) continue;
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     if (!daySourceMap.has(key)) daySourceMap.set(key, new Map());
     const sourceMap = daySourceMap.get(key)!;
@@ -282,8 +351,7 @@ export function getSourceDailyTrend(
 
   const days = [...daySourceMap.keys()].sort();
   const data: SourceDailyData[] = days.map((key) => {
-    const [, m, dd] = key.split("-");
-    const row: SourceDailyData = { date: key, label: `${parseInt(dd)}` };
+    const row: SourceDailyData = { date: key, label: dayLabel(key, period) };
     const sourceMap = daySourceMap.get(key)!;
     for (const src of topSources) {
       row[src] = sourceMap.get(src) || 0;
