@@ -1728,6 +1728,17 @@ function AITab({
 }) {
   const reportRef = useRef<HTMLDivElement>(null);
   const [exportStatus, setExportStatus] = useState<"idle" | "excel" | "pdf" | "kintone" | "done" | "error">("idle");
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [kintoneReady, setKintoneReady] = useState(false);
+  const [kintoneUrl, setKintoneUrl] = useState<string | null>(null);
+
+  // キントーンの接続設定が済んでいるかをサーバーに問い合わせる
+  useEffect(() => {
+    fetch("/api/kintone")
+      .then((r) => r.json())
+      .then((j) => setKintoneReady(!!j.configured))
+      .catch(() => setKintoneReady(false));
+  }, []);
   const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [aiResponse, setAiResponse] = useState("");
   const [aiUsage, setAiUsage] = useState<{ input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number } | null>(null);
@@ -1793,22 +1804,43 @@ function AITab({
       });
       const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
       const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      // 毎回新規保管するため、ファイル名に出力日時（秒まで）を入れて一意にする
+      const now = new Date();
+      const p2 = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`;
+      const fileName = `地域連携課_経営会議報告資料_${dataMonth.year}年${dataMonth.month}月_${stamp}.xlsx`;
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `地域連携課_経営会議報告資料_${dataMonth.year}年${dataMonth.month}月.xlsx`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      // キントーンが設定済みなら、続けて新規レコードとして保管する
+      if (kintoneReady) {
+        setExportStatus("kintone");
+        const form = new FormData();
+        form.append("file", blob, fileName);
+        form.append("fileName", fileName);
+        form.append("targetMonth", `${dataMonth.year}年${dataMonth.month}月`);
+        form.append("periodLabel", viewPeriod.title);
+        const res = await fetch("/api/kintone", { method: "POST", body: form });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "キントーンへの保管に失敗しました");
+        setKintoneUrl(json.url ?? null);
+      }
       setExportStatus("done");
-      setTimeout(() => setExportStatus("idle"), 4000);
+      setTimeout(() => setExportStatus("idle"), 6000);
     } catch (e) {
       console.error(e);
+      setExportError(e instanceof Error ? e.message : String(e));
       setExportStatus("error");
-      setTimeout(() => setExportStatus("idle"), 4000);
+      setTimeout(() => setExportStatus("idle"), 8000);
     }
-  }, [allRecords, census, dataMonth]);
+  }, [allRecords, census, dataMonth, viewPeriod, kintoneReady]);
 
   const handleExport = useCallback(async () => {
     if (!reportRef.current) return;
@@ -1912,18 +1944,31 @@ function AITab({
         </div>
         <div className="flex items-center gap-3">
           {exportStatus !== "idle" && (
-            <span className="text-sm font-medium">
+            <span className="text-sm font-medium text-right">
               {exportStatus === "excel" && <span className="text-emerald-600">Excel作成中...</span>}
               {exportStatus === "pdf" && <span className="text-blue-600">PDF作成中...</span>}
-              {exportStatus === "kintone" && <span className="text-green-600">キントーン格納中...</span>}
-              {exportStatus === "done" && <span className="text-green-600">完了</span>}
-              {exportStatus === "error" && <span className="text-red-500">エラー</span>}
+              {exportStatus === "kintone" && <span className="text-green-600">キントーンへ保管中...</span>}
+              {exportStatus === "done" && (
+                <span className="text-green-600">
+                  完了
+                  {kintoneUrl && (
+                    <a href={kintoneUrl} target="_blank" rel="noopener noreferrer"
+                      className="ml-2 underline hover:no-underline">キントーンで開く</a>
+                  )}
+                </span>
+              )}
+              {exportStatus === "error" && (
+                <span className="text-red-500">
+                  エラー
+                  {exportError && <span className="block text-[11px] font-normal max-w-xs">{exportError}</span>}
+                </span>
+              )}
             </span>
           )}
           <button onClick={handleExcelExport} disabled={exportStatus !== "idle"}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${exportStatus !== "idle" ? "bg-gray-100 text-gray-400" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 4h16v16H4zM4 10h16M10 4v16" /></svg>
-            経営会議報告資料をExcel出力
+            {kintoneReady ? "経営会議報告資料をExcel出力 / キントーン保管" : "経営会議報告資料をExcel出力"}
           </button>
           <button onClick={handleExport} disabled={exportStatus !== "idle"}
             className={`px-3 py-2 rounded-lg text-sm font-medium transition border ${exportStatus !== "idle" ? "border-gray-200 text-gray-400" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
