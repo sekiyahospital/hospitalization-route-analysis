@@ -18,6 +18,7 @@ import {
 import { runCrossAnalysis, type CrossAnalysisResult, type CrossTable } from "@/lib/cross-analysis";
 import { analyzeNotes, type NotesAnalysisResult } from "@/lib/notes-analysis";
 import { geocodeAddresses } from "@/lib/geocode";
+import { buildMeetingReportWorkbook, parseCensusSheet, type DailyCensus } from "@/lib/report-export";
 
 const HospitalMap = dynamic(() => import("@/components/HospitalMap"), {
   ssr: false,
@@ -48,32 +49,104 @@ const FIELD_MAP: Record<string, keyof HospitalRecord> = {
   "進捗": "status", "進捗・転帰": "status", "ステータス": "status",
   "氏名": "name", "名前": "name",
   "家族問い合わせ日": "family_inquiry_date", "受付日": "family_inquiry_date",
+  "家族からの問い合せ日": "family_inquiry_date",
   "見学日": "visit_date",
-  "紹介元問い合わせ日": "referral_inquiry_date",
-  "診療情報受取日": "medical_info_received_date",
-  "入院可否返答日": "admission_response_date",
-  "面談予約日": "family_meeting_booking_date",
-  "面談実施日": "meeting_date",
+  "紹介元問い合わせ日": "referral_inquiry_date", "紹介元からの問い合せ日": "referral_inquiry_date",
+  "診療情報受取日": "medical_info_received_date", "診情受取日": "medical_info_received_date",
+  "入院可否返答日": "admission_response_date", "紹介元へ入院可否返答日": "admission_response_date",
+  "面談予約日": "family_meeting_booking_date", "家族からの面談予約連絡日": "family_meeting_booking_date",
+  "面談実施日": "meeting_date", "面談日": "meeting_date",
   "入院申込日": "admission_application_date",
   "入院日": "admission_date",
   "紹介経路": "referral_route",
   "情報提供元": "referral_source", "紹介元": "referral_source",
-  "情報提供元2": "referral_source_2",
+  "情報提供元2": "referral_source_2", "紹介元②": "referral_source_2",
   "入院前居所": "pre_admission_location",
-  "KP住所": "kp_address",
+  "KP住所": "kp_address", "ＫＰ住所": "kp_address",
   "キャンセル理由": "cancel_reason",
   "入院不可理由": "not_admitted_reason",
   "特記事項": "notes", "備考": "notes",
 };
 
+const DATE_FIELDS: (keyof HospitalRecord)[] = [
+  "family_inquiry_date", "visit_date", "referral_inquiry_date", "medical_info_received_date",
+  "admission_response_date", "family_meeting_booking_date", "meeting_date",
+  "admission_application_date", "admission_date",
+];
+
+/** セル内の最初の M/D を拾う（「4/1、4/5」「6/12　CM」「✕」等の実データに対応） */
+function firstMonthDay(v: unknown): { m: number; d: number } | null {
+  const s = String(v ?? "").trim();
+  if (!s || s === "　") return null;
+  const m = s.match(/(?:^|[^\d])(\d{1,2})\s*\/\s*(\d{1,2})(?![\d/])/);
+  return m ? { m: +m[1], d: +m[2] } : null;
+}
+
+/**
+ * 台帳シートは「4/1」のように年が入らないため、行が時系列順である前提で
+ * 直前の行の日付（クロック）に最も近い年を選んで補完する。
+ */
 function parseExcelToRecords(XLSX: any, workbook: any): HospitalRecord[] {
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const raw: Record<string, string>[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-  return raw.map((row) => {
+  // 「進捗」と「氏名」を含む行をヘッダーとみなし、該当シートを探す
+  let found: { sheet: any; headerRow: number } | null = null;
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet?.["!ref"]) continue;
+    const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+    const idx = rows.findIndex(
+      (r) => r.some((c) => String(c).includes("進捗")) && r.some((c) => String(c).trim() === "氏名"),
+    );
+    if (idx >= 0) {
+      found = { sheet, headerRow: idx };
+      break;
+    }
+  }
+  if (!found) return [];
+
+  const rows: any[][] = XLSX.utils.sheet_to_json(found.sheet, { header: 1, raw: false, defval: "" });
+  const header = rows[found.headerRow].map((c) => String(c).trim());
+  const colOf: Partial<Record<keyof HospitalRecord, number>> = {};
+  header.forEach((h, i) => {
+    const key = FIELD_MAP[h];
+    if (key && colOf[key] === undefined) colOf[key] = i;
+  });
+
+  const nameCol = colOf.name ?? 1;
+  const body = rows.slice(found.headerRow + 1).filter((r) => String(r[nameCol] ?? "").trim());
+
+  // 年度開始（4月）を初期値にしたクロック
+  let clock = new Date(new Date().getFullYear(), 3, 1);
+  const firstAnchor = body.map((r) => firstMonthDay(r[colOf.referral_inquiry_date ?? -1])).find(Boolean);
+  if (firstAnchor) clock = new Date(clock.getFullYear(), firstAnchor.m - 1, firstAnchor.d);
+
+  const resolve = (p: { m: number; d: number }): Date => {
+    for (const y of [clock.getFullYear() - 1, clock.getFullYear(), clock.getFullYear() + 1]) {
+      const d = new Date(y, p.m - 1, p.d);
+      const diff = (d.getTime() - clock.getTime()) / 86400000;
+      if (diff >= -100 && diff <= 280) return d;
+    }
+    return new Date(clock.getFullYear(), p.m - 1, p.d);
+  };
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const anchorFields: (keyof HospitalRecord)[] = [
+    "referral_inquiry_date", "family_inquiry_date", "visit_date",
+    "medical_info_received_date", "meeting_date", "admission_application_date", "admission_date",
+  ];
+
+  return body.map((r) => {
+    const anchor = anchorFields.map((f) => firstMonthDay(r[colOf[f] ?? -1])).find(Boolean);
+    if (anchor) clock = resolve(anchor);
     const record: any = {};
-    for (const [excelCol, value] of Object.entries(row)) {
-      const key = FIELD_MAP[excelCol.trim()];
-      if (key) record[key] = String(value).trim();
+    for (const [key, col] of Object.entries(colOf) as [keyof HospitalRecord, number][]) {
+      const cell = r[col];
+      if (DATE_FIELDS.includes(key)) {
+        const p = firstMonthDay(cell);
+        record[key] = p ? iso(resolve(p)) : null;
+      } else {
+        record[key] = String(cell ?? "").trim().replace(/^　+|　+$/g, "");
+      }
     }
     if (!record.status) record.status = "";
     if (!record.name) record.name = "";
@@ -94,6 +167,7 @@ interface AIInsights {
 
 export default function Home() {
   const [records, setRecords] = useState<HospitalRecord[]>([]);
+  const [census, setCensus] = useState<DailyCensus[]>([]);
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -106,6 +180,10 @@ export default function Home() {
       .then((r) => r.json())
       .then((data) => setRecords(data))
       .catch(() => {});
+    fetch("/census_data.json")
+      .then((r) => r.json())
+      .then((data) => setCensus(data))
+      .catch(() => {});
   }, []);
 
   const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,11 +195,16 @@ export default function Home() {
       const buf = await file.arrayBuffer();
       const workbook = XLSX.read(buf, { type: "array" });
       const parsed = parseExcelToRecords(XLSX, workbook);
+      const parsedCensus = parseCensusSheet(XLSX, workbook);
       if (parsed.length === 0) {
         setImportStatus("有効なデータが見つかりませんでした");
       } else {
         setRecords(parsed);
-        setImportStatus(`${parsed.length}件のデータをインポートしました`);
+        if (parsedCensus.length > 0) setCensus(parsedCensus);
+        setImportStatus(
+          `${parsed.length}件のデータをインポートしました` +
+            (parsedCensus.length > 0 ? `（入退院数情報 ${parsedCensus.length}日分を含む）` : ""),
+        );
       }
     } catch {
       setImportStatus("ファイルの読み込みに失敗しました");
@@ -406,7 +489,8 @@ export default function Home() {
           {analysisData && activeTab === "ai" && (
             <AITab
               dataMonth={analysisData.dataMonth}
-              records={filteredRecords} sourceCVData={analysisData.sourceCVData}
+              records={filteredRecords} allRecords={records} census={census}
+              sourceCVData={analysisData.sourceCVData}
               monthlyAdmissions={analysisData.monthlyAdmissions} leadTime={analysisData.leadTime}
               cancelReasons={analysisData.cancelReasons} overallCVR={analysisData.overallCVR}
               totalAdmitted={analysisData.totalAdmitted} totalRecords={analysisData.totalRecords}
@@ -1298,12 +1382,14 @@ function PointBox({ type, children, isAI }: { type: "success" | "warning" | "dan
 }
 
 function AITab({
-  dataMonth, records, sourceCVData, monthlyAdmissions, leadTime, cancelReasons,
+  dataMonth, records, allRecords, census, sourceCVData, monthlyAdmissions, leadTime, cancelReasons,
   overallCVR, totalAdmitted, totalRecords, kpAddressData, notesAnalysis,
   crossAnalysis, funnelData, statusDist, prevYear, aiInsights,
 }: {
   dataMonth: ReturnType<typeof getDataMonth>;
   records: HospitalRecord[];
+  allRecords: HospitalRecord[];
+  census: DailyCensus[];
   sourceCVData: ReturnType<typeof getSourceCVData>;
   monthlyAdmissions: ReturnType<typeof getMonthlyAdmissions>;
   leadTime: ReturnType<typeof getLeadTimeStats>;
@@ -1320,7 +1406,7 @@ function AITab({
   aiInsights: AIInsights | null;
 }) {
   const reportRef = useRef<HTMLDivElement>(null);
-  const [exportStatus, setExportStatus] = useState<"idle" | "pdf" | "kintone" | "done" | "error">("idle");
+  const [exportStatus, setExportStatus] = useState<"idle" | "excel" | "pdf" | "kintone" | "done" | "error">("idle");
   const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [aiResponse, setAiResponse] = useState("");
   const [aiUsage, setAiUsage] = useState<{ input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number } | null>(null);
@@ -1375,6 +1461,33 @@ function AITab({
       setAiStatus("error");
     }
   }, [dataMonth, totalRecords, totalAdmitted, overallCVR, leadTime, statusDist, sourceCVData, funnelData, cancelReasons, kpAddressData, notesAnalysis, crossAnalysis, prevYear]);
+
+  const handleExcelExport = useCallback(async () => {
+    try {
+      setExportStatus("excel");
+      const XLSX = await import("xlsx");
+      const wb = buildMeetingReportWorkbook(XLSX, allRecords, census, {
+        year: dataMonth.year,
+        month: dataMonth.month,
+      });
+      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `地域連携課_経営会議報告資料_${dataMonth.year}年${dataMonth.month}月.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setExportStatus("done");
+      setTimeout(() => setExportStatus("idle"), 4000);
+    } catch (e) {
+      console.error(e);
+      setExportStatus("error");
+      setTimeout(() => setExportStatus("idle"), 4000);
+    }
+  }, [allRecords, census, dataMonth]);
 
   const handleExport = useCallback(async () => {
     if (!reportRef.current) return;
@@ -1472,15 +1585,21 @@ function AITab({
         <div className="flex items-center gap-3">
           {exportStatus !== "idle" && (
             <span className="text-sm font-medium">
+              {exportStatus === "excel" && <span className="text-emerald-600">Excel作成中...</span>}
               {exportStatus === "pdf" && <span className="text-blue-600">PDF作成中...</span>}
               {exportStatus === "kintone" && <span className="text-green-600">キントーン格納中...</span>}
               {exportStatus === "done" && <span className="text-green-600">完了</span>}
               {exportStatus === "error" && <span className="text-red-500">エラー</span>}
             </span>
           )}
+          <button onClick={handleExcelExport} disabled={exportStatus !== "idle"}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${exportStatus !== "idle" ? "bg-gray-100 text-gray-400" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 4h16v16H4zM4 10h16M10 4v16" /></svg>
+            経営会議報告資料をExcel出力
+          </button>
           <button onClick={handleExport} disabled={exportStatus !== "idle"}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${exportStatus !== "idle" ? "bg-gray-100 text-gray-400" : "bg-gray-900 text-white hover:bg-gray-800"}`}>
-            PDF出力 / キントーン格納
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition border ${exportStatus !== "idle" ? "border-gray-200 text-gray-400" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+            分析レポートPDF
           </button>
         </div>
       </div>
