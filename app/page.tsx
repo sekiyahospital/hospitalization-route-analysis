@@ -213,7 +213,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
-  const [periodMode, setPeriodMode] = useState<"month" | "range">("month");
+  const [periodMode, setPeriodMode] = useState<"month" | "range">("range");
   const [rangeFrom, setRangeFrom] = useState<string>("");
   const [rangeTo, setRangeTo] = useState<string>("");
   const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
@@ -266,16 +266,16 @@ export default function Home() {
     }
   }, [records, selectedMonthKey]);
 
-  // 期間指定モードの初期値は、選択中の月の初日〜末日
+  // 期間指定の初期値は「閲覧日を終了日とする直近30日間」。
+  // SSRとクライアントで日付がずれないよう、マウント後に決める。
   useEffect(() => {
-    if (periodMode !== "range" || rangeFrom || !selectedMonthKey) return;
-    const [y, m] = selectedMonthKey.split("-").map(Number);
-    const p = monthPeriod(y, m);
-    const iso = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    setRangeFrom(iso(p.from));
-    setRangeTo(iso(p.to));
-  }, [periodMode, rangeFrom, selectedMonthKey]);
+    if (rangeFrom) return;
+    const to = new Date();
+    const from = new Date(to);
+    from.setDate(from.getDate() - 30);
+    setRangeFrom(isoOf(from));
+    setRangeTo(isoOf(to));
+  }, [rangeFrom]);
 
   const period = useMemo<Period | null>(() => {
     if (periodMode === "range") {
@@ -534,7 +534,7 @@ export default function Home() {
                     )}
                     {period && (
                       <p className="text-[11px] text-gray-500">
-                        {period.title}（{Math.round((period.to.getTime() - period.from.getTime()) / 86400000) + 1}日間）
+                        {period.title}（{Math.floor((period.to.getTime() - period.from.getTime()) / 86400000) + 1}日間）
                         <span className="block text-gray-400">対象 {filteredRecords.length}件</span>
                       </p>
                     )}
