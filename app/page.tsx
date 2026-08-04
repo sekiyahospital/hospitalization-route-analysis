@@ -1849,31 +1849,84 @@ function AITab({
       const html2canvas = (await import("html2canvas-pro")).default;
       const { jsPDF } = await import("jspdf");
       const el = reportRef.current;
-      const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, backgroundColor: "#ffffff", logging: false });
-      const imgWidth = 210;
-      const pageHeight = 297;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      // A4の余白（mm）。0だと紙の端まで刷られて印刷時に切れる
+      const PAGE_W = 210, PAGE_H = 297;
+      const M = { top: 14, right: 10, bottom: 16, left: 10 };
+      const contentW = PAGE_W - M.left - M.right;
+      const contentH = PAGE_H - M.top - M.bottom;
+      const GAP = 5; // ブロック間の余白（mm）
+
+      // レポート全体を1枚にしてから切ると、DOM座標とキャンバス座標のズレで
+      // 見出しの途中で切れてしまう。ブロック単位で描画してページに積んでいく。
+      const blocks = [...el.querySelectorAll<HTMLElement>("[data-pdf-block]")];
       const pdf = new jsPDF("p", "mm", "a4");
-      let heightLeft = imgHeight;
-      let position = 0;
-      const imgData = canvas.toDataURL("image/jpeg", 0.92);
-      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position = -(imgHeight - heightLeft);
-        pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      let y = M.top;
+
+      for (const block of blocks) {
+        // 切り出し範囲とスクロール位置を明示しないと、html2canvasが下方向にずれて
+        // 次のセクションの先端まで写り込むことがある
+        const c = await html2canvas(block, {
+          scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
+          width: block.offsetWidth,
+          height: block.offsetHeight,
+          windowWidth: document.documentElement.clientWidth,
+          windowHeight: document.documentElement.clientHeight,
+          scrollX: 0,
+          scrollY: -window.scrollY,
+        });
+        const h = (c.height / c.width) * contentW; // mm
+        const img = c.toDataURL("image/jpeg", 0.92);
+
+        if (h <= contentH) {
+          // 入りきらないなら次のページへ送る（ブロックは分割しない）
+          if (y > M.top && y + h > M.top + contentH) {
+            pdf.addPage();
+            y = M.top;
+          }
+          pdf.addImage(img, "JPEG", M.left, y, contentW, h);
+          y += h + GAP;
+        } else {
+          // 1ページに収まらないブロックだけは分割する
+          const pxPerMm = c.height / h;
+          let from = 0;
+          const slice = document.createElement("canvas");
+          const ctx = slice.getContext("2d")!;
+          while (from < c.height) {
+            if (y > M.top) {
+              pdf.addPage();
+              y = M.top;
+            }
+            const take = Math.min(Math.floor((M.top + contentH - y) * pxPerMm), c.height - from);
+            slice.width = c.width;
+            slice.height = take;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, slice.width, take);
+            ctx.drawImage(c, 0, -from);
+            pdf.addImage(slice.toDataURL("image/jpeg", 0.92), "JPEG", M.left, y, contentW, take / pxPerMm);
+            from += take;
+            y += take / pxPerMm + GAP;
+          }
+        }
       }
+
+      // ページ番号。jsPDFの標準フォントは日本語を出せないためASCIIのみ
+      const total = pdf.getNumberOfPages();
+      for (let i = 1; i <= total; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(150);
+        pdf.text(`${i} / ${total}`, PAGE_W - M.right, PAGE_H - 7, { align: "right" });
+      }
+
       pdf.save(`関屋病院_月次分析レポート_${dataMonth.year}年${dataMonth.month}月.pdf`);
-      setExportStatus("kintone");
-      await new Promise((r) => setTimeout(r, 1500));
       setExportStatus("done");
       setTimeout(() => setExportStatus("idle"), 4000);
     } catch (e) {
       console.error(e);
+      setExportError(e instanceof Error ? e.message : String(e));
       setExportStatus("error");
-      setTimeout(() => setExportStatus("idle"), 4000);
+      setTimeout(() => setExportStatus("idle"), 8000);
     }
   }, [dataMonth]);
 
@@ -1899,7 +1952,7 @@ function AITab({
   }));
 
   const SectionDivider = ({ num, title, accent }: { num: string; title: string; accent: string }) => (
-    <div className="flex items-center gap-4 pt-2 pb-1">
+    <div data-pdf-heading className="flex items-center gap-4 pt-2 pb-1">
       <div className={`w-10 h-10 rounded-full ${accent} flex items-center justify-center text-white text-sm font-bold shrink-0`}>{num}</div>
       <div className="flex-1">
         <h3 className="text-[17px] font-bold text-gray-900 tracking-tight">{title}</h3>
@@ -1980,7 +2033,7 @@ function AITab({
       {/* Report Body */}
       <div ref={reportRef} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {/* Cover */}
-        <div className="bg-gray-900 px-8 py-10 text-white">
+        <div data-pdf-block className="bg-gray-900 px-8 py-10 text-white">
           <div className="flex items-center justify-between mb-6">
             <div className="text-[11px] tracking-[0.2em] text-gray-400 uppercase">Monthly Performance Report</div>
             <div className="text-[11px] tracking-wider text-gray-400">CONFIDENTIAL</div>
@@ -2009,7 +2062,7 @@ function AITab({
 
         <div className="px-8 py-8 space-y-8">
           {/* Section 1: KPI + Funnel */}
-          <div>
+          <div data-pdf-block>
             <SectionDivider num="01" title="経営KPIサマリー" accent="bg-blue-600" />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-5">
               <div>
@@ -2019,8 +2072,8 @@ function AITab({
                     <ComposedChart data={trendChartData}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                       <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} interval={0} /><YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} /><Tooltip />
-                      <Area type="monotone" dataKey="入院数" fill="#dbeafe" stroke="#3b82f6" strokeWidth={2} />
-                      <Line type="monotone" dataKey="入院数" stroke="#1d4ed8" strokeWidth={2} dot={{ r: 2.5, fill: "#1d4ed8" }} />
+                      <Area type="monotone" dataKey="入院数" fill="#dbeafe" stroke="#3b82f6" strokeWidth={2} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="入院数" stroke="#1d4ed8" strokeWidth={2} dot={{ r: 2.5, fill: "#1d4ed8" }} isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -2056,7 +2109,7 @@ function AITab({
           </div>
 
           {/* Section 2: CVR */}
-          <div>
+          <div data-pdf-block>
             <SectionDivider num="02" title="紹介元CVR分析" accent="bg-emerald-600" />
             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mt-5 mb-3">高CVR紹介元（問い合わせ5件以上）</h4>
             <div className="h-[260px] bg-gray-50 rounded-lg p-3 mb-4">
@@ -2066,9 +2119,9 @@ function AITab({
                   <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#6b7280" }} interval={0} angle={-15} textAnchor="end" height={45} />
                   <YAxis yAxisId="left" tick={{ fontSize: 11, fill: "#9ca3af" }} /><YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: "#9ca3af" }} />
                   <Tooltip formatter={(value, name) => [name === "CVR" || name === "全体平均" ? `${value}%` : `${value}件`, name]} />
-                  <Bar yAxisId="left" dataKey="CVR" fill="#059669" radius={[4, 4, 0, 0]} barSize={28} />
-                  <Line yAxisId="right" type="monotone" dataKey="件数" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="avg" stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5} dot={false} name="全体平均" />
+                  <Bar yAxisId="left" dataKey="CVR" fill="#059669" radius={[4, 4, 0, 0]} barSize={28} isAnimationActive={false} />
+                  <Line yAxisId="right" type="monotone" dataKey="件数" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                  <Line yAxisId="left" type="monotone" dataKey="avg" stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5} dot={false} name="全体平均" isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -2105,7 +2158,7 @@ function AITab({
           </div>
 
           {/* Section 3: Qualitative */}
-          <div>
+          <div data-pdf-block>
             <SectionDivider num="03" title="定性分析" accent="bg-violet-600" />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-5">
               <div>
@@ -2116,7 +2169,7 @@ function AITab({
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
                       <XAxis type="number" tick={{ fontSize: 11, fill: "#9ca3af" }} />
                       <YAxis dataKey="name" type="category" width={85} tick={{ fontSize: 10, fill: "#6b7280" }} />
-                      <Tooltip /><Bar dataKey="件数" fill="#059669" radius={[0, 4, 4, 0]} barSize={16} />
+                      <Tooltip /><Bar dataKey="件数" fill="#059669" radius={[0, 4, 4, 0]} barSize={16} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -2132,7 +2185,7 @@ function AITab({
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
                       <XAxis type="number" tick={{ fontSize: 11, fill: "#9ca3af" }} />
                       <YAxis dataKey="name" type="category" width={85} tick={{ fontSize: 10, fill: "#6b7280" }} />
-                      <Tooltip /><Bar dataKey="件数" fill="#dc2626" radius={[0, 4, 4, 0]} barSize={16} />
+                      <Tooltip /><Bar dataKey="件数" fill="#dc2626" radius={[0, 4, 4, 0]} barSize={16} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -2157,7 +2210,7 @@ function AITab({
           </div>
 
           {/* Section 4: Cross Analysis */}
-          <div>
+          <div data-pdf-block>
             <SectionDivider num="04" title="クロス分析 — 成功パターンとリスク" accent="bg-cyan-600" />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-5">
               <div>
@@ -2198,7 +2251,7 @@ function AITab({
           </div>
 
           {/* Section 5: Geographic */}
-          <div>
+          <div data-pdf-block>
             <SectionDivider num="05" title="地域分析" accent="bg-purple-600" />
             <div className="h-[240px] bg-gray-50 rounded-lg p-3 mt-5 mb-4">
               <ResponsiveContainer width="100%" height="100%">
@@ -2206,7 +2259,7 @@ function AITab({
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                   <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#6b7280" }} interval={0} angle={-15} textAnchor="end" height={40} />
                   <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} /><Tooltip />
-                  <Bar dataKey="件数" fill="#7c3aed" radius={[4, 4, 0, 0]} barSize={32} />
+                  <Bar dataKey="件数" fill="#7c3aed" radius={[4, 4, 0, 0]} barSize={32} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -2216,7 +2269,7 @@ function AITab({
           </div>
 
           {/* Section 6: Next Actions */}
-          <div>
+          <div data-pdf-block>
             <SectionDivider num="06" title="ネクストアクション" accent="bg-gray-900" />
             {aiInsights?.nextActions && <span className="inline-block bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full mt-2 mb-3">AI Generated</span>}
             <div className="mt-4 overflow-hidden rounded-lg border border-gray-200">
@@ -2256,7 +2309,7 @@ function AITab({
         </div>
 
         {/* Footer */}
-        <div className="px-8 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-[10px] text-gray-400">
+        <div data-pdf-block className="px-8 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-[10px] text-gray-400">
           <span>Powered by Claude AI | Theras Healthcare Analytics</span>
           <span>{dataMonth.year}年{dataMonth.month}月 月次レポート | Confidential</span>
         </div>
