@@ -1857,6 +1857,44 @@ function AITab({
       const contentH = PAGE_H - M.top - M.bottom;
       const GAP = 5; // ブロック間の余白（mm）
 
+      // 出力時のブラウザ幅でレイアウトが変わらないよう、描画中だけ横幅を固定する。
+      // 狭いウィンドウのまま出力すると縦長レイアウトが引き伸ばされ、ページ数が跳ね上がる。
+      const PDF_LAYOUT_WIDTH = 1169;
+      const prev = { width: el.style.width, minWidth: el.style.minWidth };
+      // lg: はビューポート幅のメディアクエリなので、横幅を広げるだけでは2カラムにならない。
+      // 該当箇所のグリッドを直接指定して、狭い画面でもデスクトップと同じ段組にする。
+      const grids = [...el.querySelectorAll<HTMLElement>(".lg\\:grid-cols-2")];
+      const prevGrids = grids.map((g) => g.style.gridTemplateColumns);
+
+      grids.forEach((g) => { g.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))"; });
+      // Rechartsは「コンテナの寸法が変わったとき」にしか測り直さない。画面幅を変えた後などは
+      // 古い幅のまま固まっていることがあり、そのまま撮るとグラフだけ縮んで写る。
+      // 幅を一度ずらしてから目的の幅にすることで、確実に再計測を走らせる。
+      el.style.minWidth = `${PDF_LAYOUT_WIDTH}px`;
+      el.style.width = `${PDF_LAYOUT_WIDTH - 1}px`;
+      await new Promise((r) => setTimeout(r, 80));
+      el.style.width = `${PDF_LAYOUT_WIDTH}px`;
+      window.dispatchEvent(new Event("resize"));
+
+      // 各グラフが新しい幅に追いつくまで待つ
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const settled = [...el.querySelectorAll<HTMLElement>(".recharts-wrapper")].every((w) => {
+          const box = w.parentElement; // .recharts-responsive-container
+          return !box || Math.abs(w.offsetWidth - box.clientWidth) <= 4;
+        });
+        if (settled && i >= 4) break;
+      }
+
+      const restoreLayout = () => {
+        el.style.width = prev.width;
+        el.style.minWidth = prev.minWidth;
+        grids.forEach((g, i) => { g.style.gridTemplateColumns = prevGrids[i]; });
+        window.dispatchEvent(new Event("resize"));
+      };
+
+      try {
+
       // レポート全体を1枚にしてから切ると、DOM座標とキャンバス座標のズレで
       // 見出しの途中で切れてしまう。ブロック単位で描画してページに積んでいく。
       const blocks = [...el.querySelectorAll<HTMLElement>("[data-pdf-block]")];
@@ -1870,8 +1908,8 @@ function AITab({
           scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
           width: block.offsetWidth,
           height: block.offsetHeight,
-          windowWidth: document.documentElement.clientWidth,
-          windowHeight: document.documentElement.clientHeight,
+          windowWidth: Math.max(document.documentElement.clientWidth, PDF_LAYOUT_WIDTH + 40),
+          windowHeight: Math.max(document.documentElement.clientHeight, 900),
           scrollX: 0,
           scrollY: -window.scrollY,
         });
@@ -1920,6 +1958,12 @@ function AITab({
       }
 
       pdf.save(`関屋病院_月次分析レポート_${dataMonth.year}年${dataMonth.month}月.pdf`);
+
+      } finally {
+        // 失敗しても画面のレイアウトは必ず元に戻す
+        restoreLayout();
+      }
+
       setExportStatus("done");
       setTimeout(() => setExportStatus("idle"), 4000);
     } catch (e) {
